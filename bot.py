@@ -39,7 +39,7 @@ SERVERS = [
         "category": "Drift",
     },
     {
-        "name": "ABSA Drift#4 | Rotating Maps | WDTS",
+        "name": "ABSA Drift#4 | Rotating Maps | SWARM 3.2",
         "ip": SERVER_IP,
         "port": 8084,
         "category": "Drift",
@@ -176,7 +176,9 @@ async def build_embed():
             status_emoji = "🟢" if info["num_players"] >= 0 else "🔴"
 
             # Server field with "Join Server" link
-            join_url = f"https://acstuff.club/s/q:race/online/join?ip={info['ip']}&httpPort={info['port']}"
+            join_url = (
+                f"https://acstuff.club/s/q:race/online/join?ip={info['ip']}&httpPort={info['port']}"
+            )
             embed.add_field(
                 name=f"{status_emoji} {info['name']}",
                 value=f"**Map:** {info['map']}\n**Players:** {info['players']}\n[Join Server]({join_url})",
