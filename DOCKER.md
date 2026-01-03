@@ -8,6 +8,25 @@ This Dockerfile uses [uv](https://github.com/astral-sh/uv) for fast Python packa
 docker build -t ac-discordbot .
 ```
 
+## Security
+
+This container runs as a non-root user (UID 1001) following Docker security best practices.
+
+### User Details
+- **Username**: botuser
+- **UID/GID**: 1001/1001
+- **Shell**: /sbin/nologin (no login access)
+- **Permissions**: Read-only access to application code
+
+The bot requires no file write permissions as it only reads environment variables and makes HTTP requests.
+
+### Verify Non-Root Execution
+
+```bash
+docker exec ac-discordbot whoami
+# Should output: botuser
+```
+
 ## Run
 
 ```bash
