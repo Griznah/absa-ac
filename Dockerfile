@@ -19,8 +19,8 @@ RUN groupadd -g 1001 botuser && \
 # Change ownership of /app to botuser
 RUN chown -R botuser:botuser /app
 
-# Switch to non-root user
-USER botuser
+# Switch to non-root user (use numeric UID for Kubernetes compatibility)
+USER 1001
 
 # Set environment variables (replace at runtime)
 ENV DISCORD_TOKEN=""

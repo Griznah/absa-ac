@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 
 import aiohttp
@@ -91,6 +92,15 @@ CATEGORY_EMOJIS = {
     "Touge": "🟠",
     "Track": "🔵",
 }
+
+# ================= LOGGING =================
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger(__name__)
 
 # ================= BOT SETUP =================
 
@@ -203,7 +213,7 @@ async def update_servers():
 
     channel = bot.get_channel(CHANNEL_ID)
     if channel is None:
-        print(f"❌ Channel ID {CHANNEL_ID} not found")
+        logger.error(f"Channel ID {CHANNEL_ID} not found")
         return
 
     embed = await build_embed()
@@ -211,10 +221,13 @@ async def update_servers():
     try:
         if server_message is None:
             server_message = await channel.send(embed=embed)
+            logger.info("Initial status message posted")
         else:
             await server_message.edit(embed=embed)
+            logger.info("Status message updated")
     except discord.NotFound:
         server_message = await channel.send(embed=embed)
+        logger.info("Status message recreated (previous message was deleted)")
 
 
 # ================= EVENTS =================
@@ -222,7 +235,7 @@ async def update_servers():
 
 @bot.event
 async def on_ready():
-    print(f"✅ Logged in as {bot.user}")
+    logger.info(f"✅ Logged in as {bot.user}")
     update_servers.start()
 
 
@@ -230,6 +243,7 @@ async def on_ready():
 
 
 async def main():
+    logger.info("Starting bot...")
     async with bot:
         await bot.start(DISCORD_TOKEN)
 
