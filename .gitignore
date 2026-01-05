@@ -128,3 +128,7 @@ venv.bak/
 
 # Cython debug symbols
 cython_debug/
+
+# Go binary
+bot
+

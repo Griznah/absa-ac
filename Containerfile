@@ -1,25 +1,32 @@
-FROM python:3.12-slim
+# Builder stage
+FROM docker.io/library/golang:1.25.5-alpine AS builder
 
 WORKDIR /app
 
-# Install uv
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+# Copy go mod files
+COPY go.mod go.sum ./
+RUN go mod download
 
-# Install dependencies
-COPY pyproject.toml uv.lock ./
-RUN uv venv && . .venv/bin/activate && uv sync
+# Copy source and build
+COPY main.go ./
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o bot .
 
-# Copy application
-COPY bot.py ./
+# Final stage
+FROM docker.io/library/alpine:3.23
+
+RUN apk --no-cache add ca-certificates
+
+WORKDIR /root/
+
+# Copy binary from builder
+COPY --from=builder /app/bot .
 
 # Create non-root user and group
-RUN groupadd -g 1001 botuser && \
-    useradd -r -u 1001 -g botuser -s /sbin/nologin -c "Discord Bot User" botuser
+RUN addgroup -g 1001 botuser && \
+    adduser -D -u 1001 -G botuser botuser && \
+    chown -R botuser:botuser /root
 
-# Change ownership of /app to botuser
-RUN chown -R botuser:botuser /app
-
-# Switch to non-root user (use numeric UID for Kubernetes compatibility)
+# Switch to non-root user
 USER 1001
 
 # Set environment variables (replace at runtime)
@@ -27,4 +34,4 @@ ENV DISCORD_TOKEN=""
 ENV CHANNEL_ID=""
 ENV SERVER_IP=""
 
-CMD [".venv/bin/python", "bot.py"]
+CMD ["./bot"]
