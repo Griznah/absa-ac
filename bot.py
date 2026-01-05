@@ -109,6 +109,27 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 server_message = None
 
+# ================= CLEANUP =================
+
+
+async def cleanup_old_messages():
+    """Delete all previous messages from this bot in the status channel."""
+    channel = bot.get_channel(CHANNEL_ID)
+    if channel is None:
+        logger.error(f"Channel ID {CHANNEL_ID} not found for cleanup")
+        return
+
+    try:
+        async for message in channel.history(limit=None):
+            if message.author == bot.user:
+                await message.delete()
+        logger.info("Cleaned up old bot messages")
+    except discord.Forbidden:
+        logger.warning("Missing permissions to delete messages")
+    except Exception as e:
+        logger.error(f"Error cleaning up messages: {e}")
+
+
 # ================= SERVER FETCH =================
 
 
@@ -236,6 +257,7 @@ async def update_servers():
 @bot.event
 async def on_ready():
     logger.info(f"✅ Logged in as {bot.user}")
+    await cleanup_old_messages()
     update_servers.start()
 
 
