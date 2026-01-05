@@ -33,10 +33,10 @@ Locally:
 python bot.py
 ```
 
-With Docker:
+With Podman (Local Development):
 ```bash
-docker build -t ac-discordbot .
-docker run -d \
+podman build -t ac-discordbot .
+podman run -d \
   --name ac-discordbot \
   -e DISCORD_TOKEN="your_token" \
   -e CHANNEL_ID="your_channel_id" \

@@ -1,16 +1,18 @@
-# Docker
+# Docker / Podman
 
 This Dockerfile uses [uv](https://github.com/astral-sh/uv) for fast Python package management.
+
+**Note:** We prefer `podman` for local development. All commands below use `podman`, but you can use `docker` as an alias if needed. The CI/CD pipeline uses Docker for production builds.
 
 ## Build
 
 ```bash
-docker build -t ac-discordbot .
+podman build -t ac-discordbot .
 ```
 
 ## Security
 
-This container runs as a non-root user (UID 1001) following Docker security best practices.
+This container runs as a non-root user (UID 1001) following container security best practices.
 
 ### User Details
 - **Username**: botuser
@@ -23,14 +25,14 @@ The bot requires no file write permissions as it only reads environment variable
 ### Verify Non-Root Execution
 
 ```bash
-docker exec ac-discordbot whoami
+podman exec ac-discordbot whoami
 # Should output: botuser
 ```
 
 ## Run
 
 ```bash
-docker run -d \
+podman run -d \
   --name ac-discordbot \
   -e DISCORD_TOKEN="your_bot_token_here" \
   -e CHANNEL_ID="your_channel_id" \
@@ -58,18 +60,18 @@ services:
 Then create a `.env` file with your credentials and run:
 
 ```bash
-docker-compose up -d
+podman-compose up -d
 ```
 
 ## Logs
 
 ```bash
-docker logs -f ac-discordbot
+podman logs -f ac-discordbot
 ```
 
 ## Stop
 
 ```bash
-docker stop ac-discordbot
-docker rm ac-discordbot
+podman stop ac-discordbot
+podman rm ac-discordbot
 ```
