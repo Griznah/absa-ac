@@ -6,7 +6,7 @@ WORKDIR /app
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 # Install dependencies
-COPY pyproject.toml ./
+COPY pyproject.toml uv.lock ./
 RUN uv venv && . .venv/bin/activate && uv sync
 
 # Copy application
