@@ -450,8 +450,7 @@ func TestValidateConfigStruct_InvalidPort(t *testing.T) {
 			if tc.shouldError {
 				if err == nil {
 					t.Errorf("Expected error for port %d, got nil", tc.port)
-				}
-				if !strings.Contains(err.Error(), "invalid port") {
+				} else if !strings.Contains(err.Error(), "invalid port") {
 					t.Errorf("Expected 'invalid port' in error, got: %v", err)
 				}
 			} else {
