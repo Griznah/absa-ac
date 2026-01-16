@@ -16,21 +16,20 @@ FROM docker.io/library/alpine:3.23
 
 RUN apk --no-cache add ca-certificates
 
-WORKDIR /root/
-
-# Volume mount for config.json - host can edit configuration without container rebuild
-# Mount options:
-# 1) Single file: podman run -v /path/to/config.json:/root/config.json:ro ...
-# 2) Directory: podman run -v /path/to/config:/root:ro ... (contains config.json)
-VOLUME /root
+WORKDIR /app
 
 # Copy binary from builder
 COPY --from=builder /app/bot .
 
 # Create non-root user and group
-RUN addgroup -g 1001 botuser && \
-    adduser -D -u 1001 -G botuser botuser && \
-    chown -R botuser:botuser /root
+# Volume mount for config.json - host can edit configuration without container rebuild
+# Mount options:
+# 1) Single file: podman run -v /path/to/config.json:/data/config.json:ro ...
+VOLUME /data
+
+RUN addgroup -g 1001 absabot && \
+    adduser -D -u 1001 -G absabot absabot && \
+    chown -R absabot:absabot /app /data
 
 # Switch to non-root user
 USER 1001
