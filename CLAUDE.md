@@ -87,18 +87,31 @@ except:
 
 ### Configuration System
 
+**Command-Line Flags:**
+- `-c, --config`: Path to config.json file (optional)
+
+**Config File Loading Priority:**
+1. Explicit path via `-c`/`--config` flag (if provided)
+2. `/data/config.json` (for containerized deployments)
+3. `./config.json` (for local development)
+
+The `loadConfig()` function in `main.go` implements this fallback logic with comprehensive error reporting if all paths fail.
+
 **Environment Variables** (required):
 - `DISCORD_TOKEN` - Bot authentication token
 - `CHANNEL_ID` - Target channel for status messages (as integer)
-- `SERVER_IP` - Base IP for Assetto Corsa servers
 
-**Server Configuration:** Hardcoded in `bot.py` as the `SERVERS` list. Each server has:
+**JSON Configuration:** Loaded from `config.json` with the following structure:
+- `server_ip` - Base IP for Assetto Corsa servers
+- `update_interval` - Seconds between status updates
+- `category_order` - Array defining display order
+- `category_emojis` - Map of category to emoji
+- `servers` - Array of server objects with name, port, category
+
+**Server Configuration:** Each server in the `servers` array has:
 - `name` - Display name
-- `ip` - Server IP (uses `SERVER_IP` env var)
 - `port` - HTTP query port (different from game port)
 - `category` - One of: "Drift", "Touge", "Track"
-
-**Categories:** Define display order and emojis via `CATEGORY_ORDER` and `CATEGORY_EMOJIS`.
 
 ### Discord Integration Details
 
