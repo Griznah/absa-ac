@@ -48,14 +48,58 @@ go mod download
 4. Run the bot:
 
 ```bash
+# Use default config paths (tries /data/config.json, then ./config.json)
 go run main.go
+
+# Or specify a custom config file
+go run main.go -c /path/to/config.json
+go run main.go --config /path/to/config.json
 ```
 
 Or build and run:
 
 ```bash
 go build -o bot .
+
+# Use default config paths
 ./bot
+
+# Specify custom config file
+./bot -c /path/to/config.json
+```
+
+## Usage
+
+The bot supports command-line flags for specifying the config file location:
+
+### Command-Line Flags
+
+| Flag | Description |
+|------|-------------|
+| `-c, --config` | Path to config.json file (optional) |
+
+### Config File Loading Order
+
+When no flag is provided, the bot tries multiple locations in order:
+
+1. **Command-line flag** (if provided): `-c` or `--config`
+2. **Container path**: `/data/config.json` (for Docker/Podman deployments)
+3. **Local path**: `./config.json` (for local development)
+
+### Examples
+
+```bash
+# Local development - uses ./config.json
+./bot
+
+# Container deployment - automatically finds /data/config.json
+podman run -v $(pwd)/config.json:/data/config.json:ro ac-discordbot
+
+# Custom config file
+./bot -c /etc/bot/production-config.json
+
+# Test with alternate configuration
+./bot --config ./test-config.json
 ```
 
 ## Configuration
@@ -134,12 +178,12 @@ nano /opt/ac-discordbot/config.json
 sudo chown 1001:1001 /opt/ac-discordbot/config.json
 sudo chmod 644 /opt/ac-discordbot/config.json
 
-# Run container with volume mount
+# Run container with volume mount (bot will find /data/config.json automatically)
 podman run -d \
   --name ac-discordbot \
   -e DISCORD_TOKEN="your_token" \
   -e CHANNEL_ID="your_channel_id" \
-  -v /opt/ac-discordbot/config.json:/root/config.json:ro \
+  -v /opt/ac-discordbot/config.json:/data/config.json:ro \
   --restart unless-stopped \
   ac-discordbot
 ```
@@ -160,12 +204,12 @@ nano /opt/ac-discordbot/config.json
 sudo chown 1001:1001 /opt/ac-discordbot/config.json
 sudo chmod 644 /opt/ac-discordbot/config.json
 
-# Run container with volume mount
+# Run container with volume mount (bot will find /data/config.json automatically)
 docker run -d \
   --name ac-discordbot \
   -e DISCORD_TOKEN="your_token" \
   -e CHANNEL_ID="your_channel_id" \
-  -v /opt/ac-discordbot/config.json:/root/config.json:ro \
+  -v /opt/ac-discordbot/config.json:/data/config.json:ro \
   --restart unless-stopped \
   ac-discordbot
 ```
@@ -231,7 +275,7 @@ Available images: `ghcr.io/{owner}/ac-discordbot:latest`
      --name ac-discordbot \
      -e DISCORD_TOKEN="your_token" \
      -e CHANNEL_ID="your_channel_id" \
-     -v /opt/ac-discordbot/config.json:/root/config.json:ro \
+     -v /opt/ac-discordbot/config.json:/data/config.json:ro \
      --restart unless-stopped \
      ac-discordbot
    ```
@@ -261,7 +305,7 @@ Available images: `ghcr.io/{owner}/ac-discordbot:latest`
      --name ac-discordbot \
      -e DISCORD_TOKEN="your_token" \
      -e CHANNEL_ID="your_channel_id" \
-     -v /opt/ac-discordbot/config.json:/root/config.json:ro \
+     -v /opt/ac-discordbot/config.json:/data/config.json:ro \
      --restart unless-stopped \
      ghcr.io/{owner}/ac-discordbot:latest
    ```
@@ -278,21 +322,26 @@ Available images: `ghcr.io/{owner}/ac-discordbot:latest`
 
 ### config.json Not Found
 
-**Error:** `failed to read config.json: no such file or directory`
+**Error:** `failed to load config from any location`
 
 **Solutions:**
-- Verify config.json exists in the working directory: `ls -la config.json`
-- Check container volume mount path: must be `/root/config.json` (file) or `/root/` (directory)
+- The bot tries multiple paths: command-line flag → `/data/config.json` → `./config.json`
+- For containers: verify volume mount path is `/data/config.json`
+- For local development: verify config.json exists in working directory
 - Use absolute host paths in volume mounts (not relative paths)
-- Verify mount syntax: `-v /absolute/host/path:/root/config.json:ro`
+- Verify mount syntax: `-v /absolute/host/path:/data/config.json:ro`
+- Or use the `-c` flag to specify the exact path: `./bot -c /path/to/config.json`
 
 **Debug commands:**
 ```bash
 # Check what the container sees
-podman exec ac-discordbot ls -la /root/
+podman exec ac-discordbot ls -la /data/
 
 # Check logs for exact path being searched
-podman logs ac-discordbot | grep "Loading config"
+podman logs ac-discordbot | grep "Attempting to load config"
+
+# List all attempted paths on failure
+podman logs ac-discordbot | grep "failed to load config"
 ```
 
 ### Permission Denied
@@ -321,7 +370,7 @@ podman exec ac-discordbot id
 # Output: uid=1001(botuser) gid=1001(botuser)
 
 # Test file access
-podman exec ac-discordbot cat /root/config.json
+podman exec ac-discordbot cat /data/config.json
 ```
 
 ### Invalid JSON Syntax

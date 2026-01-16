@@ -198,9 +198,9 @@ func TestLoadConfig_ValidConfig(t *testing.T) {
 	defer os.Chdir(origWd)
 
 	// Test loading
-	cfg, err := loadConfig()
+	cfg, err := loadConfig("")
 	if err != nil {
-		t.Fatalf("loadConfig() failed: %v", err)
+		t.Fatalf("loadConfig(\"\") failed: %v", err)
 	}
 
 	if cfg.ServerIP != "192.168.1.1" {
@@ -223,18 +223,18 @@ func TestLoadConfig_FileNotFound(t *testing.T) {
 	os.Chdir(tmpDir)
 	defer os.Chdir(origWd)
 
-	_, err := loadConfig()
+	_, err := loadConfig("")
 	if err == nil {
 		t.Fatal("Expected error for missing config file, got nil")
 	}
 
-	// Error should mention config.json and the working directory
+	// Error should mention all attempted paths
 	errMsg := err.Error()
+	if !strings.Contains(errMsg, "/data/config.json") {
+		t.Errorf("Error message should mention '/data/config.json', got: %v", errMsg)
+	}
 	if !strings.Contains(errMsg, "config.json") {
 		t.Errorf("Error message should mention 'config.json', got: %v", errMsg)
-	}
-	if !strings.Contains(errMsg, "working directory") {
-		t.Errorf("Error message should mention 'working directory', got: %v", errMsg)
 	}
 }
 
@@ -250,9 +250,81 @@ func TestLoadConfig_InvalidJSON(t *testing.T) {
 	os.Chdir(tmpDir)
 	defer os.Chdir(origWd)
 
-	_, err := loadConfig()
+	_, err := loadConfig("")
 	if err == nil {
 		t.Fatal("Expected error for invalid JSON, got nil")
+	}
+}
+
+// TestLoadConfig_ExplicitPath tests loading config from an explicit path
+func TestLoadConfig_ExplicitPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "custom-config.json")
+
+	validConfig := Config{
+		ServerIP:       "192.168.1.1",
+		UpdateInterval: 30,
+		CategoryOrder:  []string{"Drift"},
+		CategoryEmojis: map[string]string{"Drift": "🟣"},
+		Servers:        []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
+	}
+
+	data, _ := json.Marshal(validConfig)
+	os.WriteFile(configPath, data, 0644)
+
+	origWd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(origWd)
+
+	cfg, err := loadConfig(configPath)
+	if err != nil {
+		t.Fatalf("loadConfig(%s) failed: %v", configPath, err)
+	}
+
+	if cfg.ServerIP != "192.168.1.1" {
+		t.Errorf("Expected ServerIP '192.168.1.1', got '%s'", cfg.ServerIP)
+	}
+}
+
+// TestLoadConfig_ExplicitPathTakesPrecedence tests that explicit path is used over fallback paths
+func TestLoadConfig_ExplicitPathTakesPrecedence(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create a local config.json that should NOT be loaded
+	localConfig := Config{
+		ServerIP:       "local-ip",
+		UpdateInterval: 30,
+		CategoryOrder:  []string{"Drift"},
+		CategoryEmojis: map[string]string{"Drift": "🟣"},
+		Servers:        []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
+	}
+	data, _ := json.Marshal(localConfig)
+	os.WriteFile(filepath.Join(tmpDir, "config.json"), data, 0644)
+
+	// Create an explicit config at a different path
+	explicitConfigPath := filepath.Join(tmpDir, "custom-config.json")
+	explicitConfig := Config{
+		ServerIP:       "explicit-ip",
+		UpdateInterval: 30,
+		CategoryOrder:  []string{"Drift"},
+		CategoryEmojis: map[string]string{"Drift": "🟣"},
+		Servers:        []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
+	}
+	data, _ = json.Marshal(explicitConfig)
+	os.WriteFile(explicitConfigPath, data, 0644)
+
+	origWd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(origWd)
+
+	// With explicit path, should only load that path
+	cfg, err := loadConfig(explicitConfigPath)
+	if err != nil {
+		t.Fatalf("loadConfig(%s) failed: %v", explicitConfigPath, err)
+	}
+
+	if cfg.ServerIP != "explicit-ip" {
+		t.Errorf("Expected explicit path to be loaded (ServerIP: explicit-ip), got: %s", cfg.ServerIP)
 	}
 }
 
@@ -412,7 +484,7 @@ func TestConfigWithCurrentConfigFile(t *testing.T) {
 	}
 
 	// Load the actual config file
-	cfg, err := loadConfig()
+	cfg, err := loadConfig("")
 	if err != nil {
 		t.Fatalf("Failed to load config.json: %v", err)
 	}
