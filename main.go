@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -16,13 +18,73 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
+// ================= ENV LOADING =================
+
+// loadEnv reads a .env file and sets environment variables
+// Only sets variables that aren't already set in the environment
+func loadEnv() error {
+	envPath := ".env"
+
+	file, err := os.Open(envPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// .env file is optional, not an error
+			return nil
+		}
+		return fmt.Errorf("failed to open .env file: %w", err)
+	}
+	defer file.Close()
+
+	log.Printf("Loading environment variables from: %s", envPath)
+
+	scanner := bufio.NewScanner(file)
+	lineNum := 0
+	for scanner.Scan() {
+		lineNum++
+		line := strings.TrimSpace(scanner.Text())
+
+		// Skip empty lines and comments
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		// Parse KEY=VALUE
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) != 2 {
+			log.Printf("Warning: invalid line %d in .env, skipping: %s", lineNum, line)
+			continue
+		}
+
+		key := strings.TrimSpace(parts[0])
+		value := strings.TrimSpace(parts[1])
+
+		// Remove quotes if present
+		if strings.HasPrefix(value, "\"") && strings.HasSuffix(value, "\"") {
+			value = strings.Trim(value, "\"")
+		} else if strings.HasPrefix(value, "'") && strings.HasSuffix(value, "'") {
+			value = strings.Trim(value, "'")
+		}
+
+		// Only set if not already in environment
+		if _, exists := os.LookupEnv(key); !exists {
+			if err := os.Setenv(key, value); err != nil {
+				log.Printf("Warning: failed to set %s: %v", key, err)
+			}
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("error reading .env file: %w", err)
+	}
+
+	return nil
+}
+
 // ================= CONFIG =================
 
 var (
-	discordToken  string
-	channelID     string
-	serverIP      string
-	updateInterval = 30 // seconds
+	discordToken string
+	channelID    string
 )
 
 type Server struct {
@@ -30,80 +92,6 @@ type Server struct {
 	IP       string
 	Port     int
 	Category string
-}
-
-var servers = []Server{
-	// -------- DRIFT --------
-	{
-		Name:     "ABSA Drift#1 | Rotating Maps | BDC 4.0",
-		IP:       "", // Will be set from serverIP env var
-		Port:     8081,
-		Category: "Drift",
-	},
-	{
-		Name:     "ABSA Drift#2 | Rotating Maps | Gravy Garage",
-		IP:       "",
-		Port:     8082,
-		Category: "Drift",
-	},
-	{
-		Name:     "ABSA Drift#3 | Rotating Maps | SWARM 3.2",
-		IP:       "",
-		Port:     8083,
-		Category: "Drift",
-	},
-	{
-		Name:     "ABSA Drift#4 | Rotating Maps | SWARM 3.2",
-		IP:       "",
-		Port:     8084,
-		Category: "Drift",
-	},
-	{
-		Name:     "ABSA Drift#8 | Rotating Maps | SWARM 3.2 Touge",
-		IP:       "",
-		Port:     8088,
-		Category: "Drift",
-	},
-	// -------- TOUGE --------
-	{
-		Name:     "ABSA Race#6 | Touge FAST Lap",
-		IP:       "",
-		Port:     8086,
-		Category: "Touge",
-	},
-	// -------- TRACK --------
-	{
-		Name:     "ABSA Race#5 | Nordschleife Tourist FAST Lap",
-		IP:       "",
-		Port:     8085,
-		Category: "Track",
-	},
-	{
-		Name:     "ABSA GoKart#7 | Rotating Maps |",
-		IP:       "",
-		Port:     8087,
-		Category: "Track",
-	},
-	{
-		Name:     "ABSA SRP#9 | SRP Traffic|",
-		IP:       "",
-		Port:     8089,
-		Category: "Track",
-	},
-	{
-		Name:     "ABSA SRP#10 | SRP Traffic|",
-		IP:       "",
-		Port:     8090,
-		Category: "Track",
-	},
-}
-
-var categoryOrder = []string{"Drift", "Touge", "Track"}
-
-var categoryEmojis = map[string]string{
-	"Drift": "\U0001F7E3", // 🟣
-	"Touge": "\U0001F7E0", // 🟠
-	"Track": "\U0001F535", // 🔵
 }
 
 // ================= TYPES =================
@@ -121,8 +109,94 @@ type ServerInfo struct {
 type Bot struct {
 	session       *discordgo.Session
 	channelID     string
+	config        *Config
 	serverMessage *discordgo.Message
 	messageMutex  sync.RWMutex
+}
+
+// Config holds application configuration loaded from config.json
+type Config struct {
+	ServerIP        string            `json:"server_ip"`
+	UpdateInterval  int               `json:"update_interval"`
+	CategoryOrder   []string          `json:"category_order"`
+	CategoryEmojis  map[string]string `json:"category_emojis"`
+	Servers         []Server          `json:"servers"`
+}
+
+// loadConfig reads and parses config.json from the working directory
+func loadConfig() (*Config, error) {
+	wd, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get working directory: %w", err)
+	}
+
+	configPath := filepath.Join(wd, "config.json")
+	log.Printf("Loading config from: %s", configPath)
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read config.json: %w (working directory: %s)", err, wd)
+	}
+
+	var cfg Config
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("failed to parse config.json: %w", err)
+	}
+
+	return &cfg, nil
+}
+
+// validateConfigStruct performs fail-fast validation on loaded config
+func validateConfigStruct(cfg *Config) {
+	// Validate ServerIP
+	if cfg.ServerIP == "" {
+		log.Fatalf("Configuration error: server_ip cannot be empty")
+	}
+
+	// Validate UpdateInterval (minimum 1 second)
+	if cfg.UpdateInterval < 1 {
+		log.Fatalf("Configuration error: update_interval must be at least 1 second (got: %d)", cfg.UpdateInterval)
+	}
+
+	// Validate CategoryOrder
+	if len(cfg.CategoryOrder) == 0 {
+		log.Fatalf("Configuration error: category_order cannot be empty")
+	}
+
+	// Build category lookup map for O(1) validation
+	categoryMap := make(map[string]bool)
+	for _, cat := range cfg.CategoryOrder {
+		categoryMap[cat] = true
+	}
+
+	// Validate all categories have emojis
+	for _, cat := range cfg.CategoryOrder {
+		if _, exists := cfg.CategoryEmojis[cat]; !exists {
+			log.Fatalf("Configuration error: category '%s' is in category_order but missing from category_emojis", cat)
+		}
+	}
+
+	// Validate servers
+	for i, server := range cfg.Servers {
+		if server.Name == "" {
+			log.Fatalf("Configuration error: server at index %d has empty name", i)
+		}
+
+		if server.Port < 1 || server.Port > 65535 {
+			log.Fatalf("Configuration error: server '%s' has invalid port: %d (valid range: 1-65535)", server.Name, server.Port)
+		}
+
+		if server.Category == "" {
+			log.Fatalf("Configuration error: server '%s' has empty category", server.Name)
+		}
+
+		// Validate server category exists in CategoryOrder
+		if !categoryMap[server.Category] {
+			log.Fatalf("Configuration error: server '%s' has category '%s' which is not defined in category_order", server.Name, server.Category)
+		}
+	}
+
+	log.Printf("Configuration validated: %d servers across %d categories", len(cfg.Servers), len(cfg.CategoryOrder))
 }
 
 // ================= HTTP CLIENT =================
@@ -131,12 +205,12 @@ var httpClient = &http.Client{
 	Timeout: 2 * time.Second,
 }
 
-func fetchAllServers() []ServerInfo {
+func fetchAllServers(cfg *Config) []ServerInfo {
 	var wg sync.WaitGroup
-	infos := make([]ServerInfo, len(servers))
+	infos := make([]ServerInfo, len(cfg.Servers))
 	mu := sync.Mutex{}
 
-	for i, server := range servers {
+	for i, server := range cfg.Servers {
 		wg.Add(1)
 		go func(idx int, s Server) {
 			defer wg.Done()
@@ -213,7 +287,7 @@ func offlineServerInfo(server Server) ServerInfo {
 
 // ================= DISCORD INTEGRATION =================
 
-func buildEmbed(infos []ServerInfo) *discordgo.MessageEmbed {
+func buildEmbed(infos []ServerInfo, cfg *Config) *discordgo.MessageEmbed {
 	// Group servers and calculate totals
 	grouped := make(map[string][]ServerInfo)
 	categoryTotals := make(map[string]int)
@@ -236,16 +310,16 @@ func buildEmbed(infos []ServerInfo) *discordgo.MessageEmbed {
 			URL: "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d9/Flag_of_Norway.svg/320px-Flag_of_Norway.svg.png",
 		},
 		Image: &discordgo.MessageEmbedImage{
-			URL: fmt.Sprintf("http://%s/images/logo.png", serverIP),
+			URL: fmt.Sprintf("http://%s/images/logo.png", cfg.ServerIP),
 		},
 		Footer: &discordgo.MessageEmbedFooter{
-			Text: fmt.Sprintf("Updates every %d seconds", updateInterval),
+			Text: fmt.Sprintf("Updates every %d seconds", cfg.UpdateInterval),
 		},
 	}
 
-	// Add fields by category
-	for _, category := range categoryOrder {
-		emoji := categoryEmojis[category]
+	// Append fields by category
+	for _, category := range cfg.CategoryOrder {
+		emoji := cfg.CategoryEmojis[category]
 		total := categoryTotals[category]
 
 		// Category header field
@@ -388,7 +462,7 @@ func (b *Bot) registerHandlers() {
 // ================= UPDATE LOOP =================
 
 func (b *Bot) startUpdateLoop() {
-	ticker := time.NewTicker(time.Duration(updateInterval) * time.Second)
+	ticker := time.NewTicker(time.Duration(b.config.UpdateInterval) * time.Second)
 	defer ticker.Stop()
 
 	// Immediate first update
@@ -401,12 +475,12 @@ func (b *Bot) startUpdateLoop() {
 
 func (b *Bot) performUpdate() {
 	// Fetch all server info concurrently
-	infos := fetchAllServers()
+	infos := fetchAllServers(b.config)
 
 	// Build embed
-	embed := buildEmbed(infos)
+	embed := buildEmbed(infos, b.config)
 
-	// Update Discord message
+	// Send updated embed to Discord
 	if err := b.updateStatusMessage(embed); err != nil {
 		log.Printf("Error updating status: %v", err)
 	}
@@ -425,7 +499,7 @@ func createDiscordSession(token string) (*discordgo.Session, error) {
 	return session, nil
 }
 
-func NewBot(token, channelID string) (*Bot, error) {
+func NewBot(cfg *Config, token, channelID string) (*Bot, error) {
 	if token == "" {
 		return nil, fmt.Errorf("DISCORD_TOKEN environment variable not set")
 	}
@@ -441,6 +515,7 @@ func NewBot(token, channelID string) (*Bot, error) {
 	return &Bot{
 		session:   session,
 		channelID: channelID,
+		config:    cfg,
 	}, nil
 }
 
@@ -467,43 +542,49 @@ func (b *Bot) WaitForShutdown() {
 
 // ================= MAIN =================
 
-func validateConfig() (token, channelID, ip string, err error) {
+func validateConfig() (token, channelID string, err error) {
 	token = os.Getenv("DISCORD_TOKEN")
 	if token == "" {
-		return "", "", "", fmt.Errorf("DISCORD_TOKEN environment variable not set")
+		return "", "", fmt.Errorf("DISCORD_TOKEN environment variable not set")
 	}
 
 	channelID = os.Getenv("CHANNEL_ID")
 	if channelID == "" {
-		return "", "", "", fmt.Errorf("CHANNEL_ID environment variable not set")
+		return "", "", fmt.Errorf("CHANNEL_ID environment variable not set")
 	}
 
-	ip = os.Getenv("SERVER_IP")
-	if ip == "" {
-		return "", "", "", fmt.Errorf("SERVER_IP environment variable not set")
-	}
-
-	return token, channelID, ip, nil
+	return token, channelID, nil
 }
 
 func main() {
 	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
 
-	token, channelID, ip, err := validateConfig()
+	// Load environment variables from .env file (optional)
+	if err := loadEnv(); err != nil {
+		log.Printf("Warning: %v", err)
+	}
+
+	token, channelID, err := validateConfig()
 	if err != nil {
 		log.Fatalf("Configuration error: %v", err)
 	}
 
 	discordToken = token
 	channelID = channelID
-	serverIP = ip
 
-	// Update server IPs in the servers list
-	for i := range servers {
-		servers[i].IP = serverIP
+	// Load and validate config.json
+	cfg, err := loadConfig()
+	if err != nil {
+		log.Fatalf("Failed to load config: %v", err)
+	}
+	validateConfigStruct(cfg)
+
+	// Set server IPs from config
+	for i := range cfg.Servers {
+		cfg.Servers[i].IP = cfg.ServerIP
 	}
 
-	bot, err := NewBot(token, channelID)
+	bot, err := NewBot(cfg, token, channelID)
 	if err != nil {
 		log.Fatalf("Failed to create bot: %v", err)
 	}

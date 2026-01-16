@@ -31,15 +31,54 @@ podman exec ac-discordbot whoami
 
 ## Run
 
+### Configuration via Volume Mount
+
+The bot loads `config.json` from its working directory (`/root/`) at startup.
+Host can edit server configuration via volume mount without container rebuild.
+
+**Option 1: Mount single config file (recommended - simpler)**
 ```bash
+# Create config file on host
+mkdir -p /path/to/config
+cp config.json.example /path/to/config/config.json
+nano /path/to/config/config.json
+
+# Ensure non-root container user (UID 1001) can read
+sudo chown 1001:1001 /path/to/config/config.json
+sudo chmod 644 /path/to/config/config.json
+
+# Run with file mount
 podman run -d \
   --name ac-discordbot \
   -e DISCORD_TOKEN="your_bot_token_here" \
   -e CHANNEL_ID="your_channel_id" \
-  -e SERVER_IP="your.server.ip" \
+  -v /path/to/config/config.json:/root/config.json:ro \
   --restart unless-stopped \
   ac-discordbot
 ```
+
+**Option 2: Mount working directory (for multiple config files)**
+```bash
+# Create directory with config file inside
+mkdir -p /path/to/config
+cp config.json.example /path/to/config/config.json
+sudo chown -R 1001:1001 /path/to/config
+sudo chmod 755 /path/to/config
+
+# Run with directory mount
+podman run -d \
+  --name ac-discordbot \
+  -e DISCORD_TOKEN="your_bot_token_here" \
+  -e CHANNEL_ID="your_channel_id" \
+  -v /path/to/config:/root:ro \
+  --restart unless-stopped \
+  ac-discordbot
+```
+
+The `:ro` flag makes the mount read-only for additional security. To edit configuration:
+1. Edit config file on host
+2. Restart the container: `podman restart ac-discordbot`
+3. Bot loads the new configuration on startup
 
 ## Using Docker Compose
 
@@ -53,7 +92,8 @@ services:
     environment:
       - DISCORD_TOKEN=${DISCORD_TOKEN}
       - CHANNEL_ID=${CHANNEL_ID}
-      - SERVER_IP=${SERVER_IP}
+    volumes:
+      - ./config.json:/root/config.json:ro
     restart: unless-stopped
 ```
 
@@ -75,3 +115,33 @@ podman logs -f ac-discordbot
 podman stop ac-discordbot
 podman rm ac-discordbot
 ```
+
+## Troubleshooting
+
+### Permission Denied Errors
+
+If the bot cannot read config.json:
+
+```bash
+# Check container user ID
+podman exec ac-discordbot id
+# Output: uid=1001(botuser) gid=1001(botuser)
+
+# Fix host file permissions (for single file mount)
+sudo chown 1001:1001 /path/to/config/config.json
+# OR for directory mount:
+sudo chown -R 1001:1001 /path/to/config
+```
+
+### Config File Not Found
+
+Check container logs for the absolute path being searched:
+
+```bash
+podman logs ac-discordbot | grep "Loading config"
+```
+
+Common issues:
+- Volume mount path must match: `/root/config.json` (file) or `/root/` (directory)
+- Host path must be absolute (not relative to current directory)
+- Config file name must be exactly `config.json` (case-sensitive)
