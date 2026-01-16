@@ -80,11 +80,11 @@ The bot supports command-line flags for specifying the config file location:
 
 ### Config File Loading Order
 
-When no flag is provided, the bot tries multiple locations in order:
+The bot loads configuration in the following priority order:
 
-1. **Command-line flag** (if provided): `-c` or `--config`
-2. **Container path**: `/data/config.json` (for Docker/Podman deployments)
-3. **Local path**: `./config.json` (for local development)
+1. **Command-line flag** (if provided): `-c` or `--config` - uses only this path
+2. **Container path**: `/data/config.json` - checked when no flag is provided
+3. **Local path**: `./config.json` - checked when no flag is provided (fallback for local development)
 
 ### Examples
 
