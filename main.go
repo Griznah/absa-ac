@@ -126,31 +126,36 @@ type Config struct {
 
 // loadConfig reads and parses config.json with fallback logic
 func loadConfig(providedPath string) (*Config, error) {
-	// Build list of paths to try, in priority order
-	pathsToTry := []string{}
+	// If explicitly provided, only try that path
+	if providedPath != "" {
+		log.Printf("Loading config from provided path: %s", providedPath)
+		data, err := os.ReadFile(providedPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read config from %s: %w", providedPath, err)
+		}
+
+		var cfg Config
+		if err := json.Unmarshal(data, &cfg); err != nil {
+			return nil, fmt.Errorf("failed to parse config from %s: %w", providedPath, err)
+		}
+
+		log.Printf("Successfully loaded config from: %s", providedPath)
+		return &cfg, nil
+	}
+
+	// Otherwise, try default locations in priority order
 	wd, err := os.Getwd()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get working directory: %w", err)
 	}
 
-	// Priority 1: Explicitly provided path
-	if providedPath != "" {
-		pathsToTry = append(pathsToTry, providedPath)
+	defaultPaths := []string{
+		"/data/config.json",
+		filepath.Join(wd, "config.json"),
 	}
 
-	// Priority 2: Container path (if not explicitly provided)
-	if providedPath != "/data/config.json" {
-		pathsToTry = append(pathsToTry, "/data/config.json")
-	}
-
-	// Priority 3: Local development path (if not explicitly provided)
-	if providedPath != "./config.json" && providedPath != "config.json" {
-		pathsToTry = append(pathsToTry, filepath.Join(wd, "config.json"))
-	}
-
-	// Try each path, collecting errors for comprehensive reporting
 	var errors []string
-	for _, path := range pathsToTry {
+	for _, path := range defaultPaths {
 		log.Printf("Attempting to load config from: %s", path)
 
 		data, err := os.ReadFile(path)
@@ -168,7 +173,7 @@ func loadConfig(providedPath string) (*Config, error) {
 		return &cfg, nil
 	}
 
-	return nil, fmt.Errorf("failed to load config from any location:\n%s", strings.Join(errors, "\n"))
+	return nil, fmt.Errorf("failed to load config from any default location:\n%s", strings.Join(errors, "\n"))
 }
 
 // validateConfigStruct performs fail-fast validation on loaded config
