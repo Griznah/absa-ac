@@ -24,6 +24,7 @@ COPY --from=builder /app/bot .
 # Create non-root user and group
 RUN addgroup -g 1001 absabot && \
     adduser -D -u 1001 -G absabot absabot && \
+    mkdir -p /data && \
     chown -R absabot:absabot /app /data
 
 # Volume mount for config.json - host can edit configuration without container rebuild
