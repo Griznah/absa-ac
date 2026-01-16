@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -95,6 +96,198 @@ type Server struct {
 	Category string
 }
 
+// ConfigManager provides thread-safe access to configuration with dynamic reload
+// Uses atomic.Value for lock-free reads (critical for performance during server polling)
+// Uses sync.RWMutex to serialize reload operations (rare writes vs frequent reads)
+// Debounces rapid file writes to prevent excessive reload attempts during editor save operations
+type ConfigManager struct {
+	config        atomic.Value // stores *Config
+	configPath    string
+	lastModTime   time.Time
+	mu            sync.RWMutex
+	debounceTimer *time.Timer // Timer for debouncing rapid file writes
+}
+
+// NewConfigManager creates a new ConfigManager with an initial configuration
+// Stores initial config in atomic.Value for lock-free access
+// Records initial file modification time to detect future changes
+func NewConfigManager(configPath string, initial *Config) *ConfigManager {
+	cm := &ConfigManager{
+		configPath: configPath,
+	}
+	cm.config.Store(initial)
+
+	// Get initial file modification time
+	if modTime, err := cm.getLastModTime(); err == nil {
+		cm.lastModTime = modTime
+	} else {
+		log.Printf("Warning: failed to get initial config mod time: %v", err)
+	}
+
+	return cm
+}
+
+// GetConfig returns the current configuration (thread-safe, lock-free read)
+// atomic.Value.Load() provides zero-copy access without mutex contention
+// Multiple goroutines can call this simultaneously during server polling
+func (cm *ConfigManager) GetConfig() *Config {
+	return cm.config.Load().(*Config)
+}
+
+// getLastModTime retrieves the modification time of the config file (changes indicate config modifications requiring reload)
+// Returns raw os.Stat error for caller to handle (file not found, permission denied, etc.)
+func (cm *ConfigManager) getLastModTime() (time.Time, error) {
+	info, err := os.Stat(cm.configPath)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return info.ModTime(), nil
+}
+
+// checkAndReloadIfNeeded checks if the config file has changed and schedules debounced reload
+// Returns nil immediately after scheduling (doesn't wait for reload to complete)
+// Debouncing prevents excessive reloads during rapid file writes (e.g., editor save operations)
+// Most text editors perform multiple write operations when saving files, causing multiple
+// file modification events. Without debouncing, each write would trigger a separate reload.
+func (cm *ConfigManager) checkAndReloadIfNeeded() error {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+
+	// Check current file modification time
+	currentModTime, err := cm.getLastModTime()
+	if err != nil {
+		return fmt.Errorf("failed to stat config file: %w", err)
+	}
+
+	// No change detected
+	if currentModTime.Equal(cm.lastModTime) || currentModTime.Before(cm.lastModTime) {
+		return nil
+	}
+
+	// File has changed, schedule debounced reload
+	// Stop any existing timer to reset debounce window on each new write
+	if cm.debounceTimer != nil {
+		cm.debounceTimer.Stop()
+	}
+
+	// Create new timer that fires 100ms after last write
+	// If another write occurs within 100ms, this timer will be stopped and reset
+	cm.debounceTimer = time.AfterFunc(100*time.Millisecond, func() {
+		// Timer callback runs in separate goroutine
+		if err := cm.performReload(); err != nil {
+			log.Printf("Config reload failed: %v", err)
+		}
+	})
+
+	return nil
+}
+
+// performReload executes the actual config reload (load, validate, atomic swap)
+// Called by debounce timer after writes have settled
+// Logs errors but never crashes - bot continues with old config on reload failure
+func (cm *ConfigManager) performReload() error {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+
+	// Double-check modification time (file might have changed again during debounce)
+	currentModTime, err := cm.getLastModTime()
+	if err != nil {
+		return fmt.Errorf("failed to stat config file: %w", err)
+	}
+
+	// If file hasn't changed since last reload, skip
+	if currentModTime.Equal(cm.lastModTime) {
+		return nil
+	}
+
+	log.Printf("Config file modified, attempting reload from: %s", cm.configPath)
+
+	// Load new config
+	newCfg, err := loadConfig(cm.configPath)
+	if err != nil {
+		return fmt.Errorf("failed to read config: %w", err)
+	}
+
+	// Validate new config
+	if err := validateConfigStructSafeRuntime(newCfg); err != nil {
+		return fmt.Errorf("config validation failed: %w", err)
+	}
+
+	// Success: atomically swap config and update mod time
+	cm.config.Store(newCfg)
+	cm.lastModTime = currentModTime
+	log.Println("Config reloaded successfully")
+
+	return nil
+}
+
+// Cleanup stops the debounce timer and releases resources
+// Called during bot shutdown to prevent timer callbacks after shutdown
+// Safe to call multiple times (idempotent)
+func (cm *ConfigManager) Cleanup() {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+
+	// Stop timer if running
+	if cm.debounceTimer != nil {
+		cm.debounceTimer.Stop()
+		cm.debounceTimer = nil
+	}
+}
+
+// validateConfigStructSafeRuntime is a non-fatal version of validateConfigStruct for runtime reload
+// Returns error instead of calling log.Fatalf, allowing bot to continue with old config on validation failure
+// Critical for dynamic reload: invalid config must not terminate running bot
+// Same validation rules as validateConfigStruct, but safe for runtime use
+func validateConfigStructSafeRuntime(cfg *Config) error {
+	if cfg.ServerIP == "" {
+		return fmt.Errorf("server_ip cannot be empty")
+	}
+
+	if cfg.UpdateInterval < 1 {
+		return fmt.Errorf("update_interval must be at least 1 second (got: %d)", cfg.UpdateInterval)
+	}
+
+	if len(cfg.CategoryOrder) == 0 {
+		return fmt.Errorf("category_order cannot be empty")
+	}
+
+	// Build category lookup map for O(1) validation
+	categoryMap := make(map[string]bool)
+	for _, cat := range cfg.CategoryOrder {
+		categoryMap[cat] = true
+	}
+
+	// Validate all categories have emojis
+	for _, cat := range cfg.CategoryOrder {
+		if _, exists := cfg.CategoryEmojis[cat]; !exists {
+			return fmt.Errorf("category '%s' is in category_order but missing from category_emojis", cat)
+		}
+	}
+
+	// Validate servers
+	for i, server := range cfg.Servers {
+		if server.Name == "" {
+			return fmt.Errorf("server at index %d has empty name", i)
+		}
+
+		if server.Port < 1 || server.Port > 65535 {
+			return fmt.Errorf("server '%s' has invalid port: %d (valid range: 1-65535)", server.Name, server.Port)
+		}
+
+		if server.Category == "" {
+			return fmt.Errorf("server '%s' has empty category", server.Name)
+		}
+
+		// Validate server category exists in CategoryOrder
+		if !categoryMap[server.Category] {
+			return fmt.Errorf("server '%s' has category '%s' which is not defined in category_order", server.Name, server.Category)
+		}
+	}
+
+	return nil
+}
+
 // ================= TYPES =================
 
 type ServerInfo struct {
@@ -110,18 +303,18 @@ type ServerInfo struct {
 type Bot struct {
 	session       *discordgo.Session
 	channelID     string
-	config        *Config
+	configManager *ConfigManager
 	serverMessage *discordgo.Message
 	messageMutex  sync.RWMutex
 }
 
 // Config holds application configuration loaded from config.json
 type Config struct {
-	ServerIP        string            `json:"server_ip"`
-	UpdateInterval  int               `json:"update_interval"`
-	CategoryOrder   []string          `json:"category_order"`
-	CategoryEmojis  map[string]string `json:"category_emojis"`
-	Servers         []Server          `json:"servers"`
+	ServerIP       string            `json:"server_ip"`
+	UpdateInterval int               `json:"update_interval"`
+	CategoryOrder  []string          `json:"category_order"`
+	CategoryEmojis map[string]string `json:"category_emojis"`
+	Servers        []Server          `json:"servers"`
 }
 
 // loadConfig reads and parses config.json with fallback logic
@@ -174,6 +367,39 @@ func loadConfig(providedPath string) (*Config, error) {
 	}
 
 	return nil, fmt.Errorf("failed to load config from any default location:\n%s", strings.Join(errors, "\n"))
+}
+
+// getConfigPath determines the actual config file path that loadConfig uses
+// Matches loadConfig's fallback logic exactly: provided path -> /data/config.json -> ./config.json
+func getConfigPath(providedPath string) string {
+	// If explicitly provided, return that path (matches loadConfig's provided-path mode)
+	if providedPath != "" {
+		return providedPath
+	}
+
+	// Otherwise, try default locations in same priority order as loadConfig's fallback mode
+	wd, err := os.Getwd()
+	if err != nil {
+		// If we can't get working directory, config load fails
+		// Return empty string to signal error condition
+		return ""
+	}
+
+	defaultPaths := []string{
+		"/data/config.json",
+		filepath.Join(wd, "config.json"),
+	}
+
+	// Return first existing path (matches loadConfig's fallback priority order)
+	for _, path := range defaultPaths {
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+	}
+
+	// No config file found - this matches loadConfig's error return when all paths fail
+	// Empty string signals that no valid config path exists
+	return ""
 }
 
 // validateConfigStruct performs fail-fast validation on loaded config
@@ -235,7 +461,8 @@ var httpClient = &http.Client{
 	Timeout: 2 * time.Second,
 }
 
-func fetchAllServers(cfg *Config) []ServerInfo {
+func fetchAllServers(cfgManager *ConfigManager) []ServerInfo {
+	cfg := cfgManager.GetConfig()
 	var wg sync.WaitGroup
 	infos := make([]ServerInfo, len(cfg.Servers))
 	mu := sync.Mutex{}
@@ -317,7 +544,9 @@ func offlineServerInfo(server Server) ServerInfo {
 
 // ================= DISCORD INTEGRATION =================
 
-func buildEmbed(infos []ServerInfo, cfg *Config) *discordgo.MessageEmbed {
+func buildEmbed(infos []ServerInfo, cfgManager *ConfigManager) *discordgo.MessageEmbed {
+	cfg := cfgManager.GetConfig()
+
 	// Group servers and calculate totals
 	grouped := make(map[string][]ServerInfo)
 	categoryTotals := make(map[string]int)
@@ -492,23 +721,28 @@ func (b *Bot) registerHandlers() {
 // ================= UPDATE LOOP =================
 
 func (b *Bot) startUpdateLoop() {
-	ticker := time.NewTicker(time.Duration(b.config.UpdateInterval) * time.Second)
+	cfg := b.configManager.GetConfig()
+	ticker := time.NewTicker(time.Duration(cfg.UpdateInterval) * time.Second)
 	defer ticker.Stop()
 
 	// Immediate first update
 	b.performUpdate()
 
 	for range ticker.C {
+		// Check for config updates before each update
+		if err := b.checkForConfigUpdates(); err != nil {
+			log.Printf("Config reload check failed: %v", err)
+		}
 		b.performUpdate()
 	}
 }
 
 func (b *Bot) performUpdate() {
 	// Fetch all server info concurrently
-	infos := fetchAllServers(b.config)
+	infos := fetchAllServers(b.configManager)
 
 	// Build embed
-	embed := buildEmbed(infos, b.config)
+	embed := buildEmbed(infos, b.configManager)
 
 	// Send updated embed to Discord
 	if err := b.updateStatusMessage(embed); err != nil {
@@ -529,7 +763,7 @@ func createDiscordSession(token string) (*discordgo.Session, error) {
 	return session, nil
 }
 
-func NewBot(cfg *Config, token, channelID string) (*Bot, error) {
+func NewBot(cfgManager *ConfigManager, token, channelID string) (*Bot, error) {
 	if token == "" {
 		return nil, fmt.Errorf("DISCORD_TOKEN environment variable not set")
 	}
@@ -543,9 +777,9 @@ func NewBot(cfg *Config, token, channelID string) (*Bot, error) {
 	}
 
 	return &Bot{
-		session:   session,
-		channelID: channelID,
-		config:    cfg,
+		session:       session,
+		channelID:     channelID,
+		configManager: cfgManager,
 	}, nil
 }
 
@@ -563,11 +797,24 @@ func (b *Bot) WaitForShutdown() {
 	<-sigchan
 	log.Println("Shutting down...")
 
+	// Cleanup config manager (stop debounce timer)
+	if b.configManager != nil {
+		b.configManager.Cleanup()
+	}
+
 	if err := b.session.Close(); err != nil {
 		log.Printf("Error closing Discord session: %v", err)
 	}
 
 	log.Println("Shutdown complete")
+}
+
+// checkForConfigUpdates wraps checkAndReloadIfNeeded for use in update loop
+func (b *Bot) checkForConfigUpdates() error {
+	if b.configManager == nil {
+		return nil
+	}
+	return b.configManager.checkAndReloadIfNeeded()
 }
 
 // ================= MAIN =================
@@ -619,7 +866,9 @@ func main() {
 		cfg.Servers[i].IP = cfg.ServerIP
 	}
 
-	bot, err := NewBot(cfg, token, channelID)
+	// Create config manager with initial config
+	configManager := NewConfigManager(getConfigPath(*configPath), cfg)
+	bot, err := NewBot(configManager, token, channelID)
 	if err != nil {
 		log.Fatalf("Failed to create bot: %v", err)
 	}
