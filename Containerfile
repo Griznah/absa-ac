@@ -18,6 +18,12 @@ RUN apk --no-cache add ca-certificates
 
 WORKDIR /root/
 
+# Volume mount for config.json - host can edit configuration without container rebuild
+# Mount options:
+# 1) Single file: podman run -v /path/to/config.json:/root/config.json:ro ...
+# 2) Directory: podman run -v /path/to/config:/root:ro ... (contains config.json)
+VOLUME /root
+
 # Copy binary from builder
 COPY --from=builder /app/bot .
 
@@ -32,6 +38,5 @@ USER 1001
 # Set environment variables (replace at runtime)
 ENV DISCORD_TOKEN=""
 ENV CHANNEL_ID=""
-ENV SERVER_IP=""
 
 CMD ["./bot"]
