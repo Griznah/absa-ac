@@ -338,10 +338,14 @@ func TestValidateConfigStruct_EmptyServerIP(t *testing.T) {
 		Servers:        []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
 	}
 
-	// This should call log.Fatalf, which we can't test directly
-	// Instead, we verify the validation logic works by checking the condition
-	if cfg.ServerIP == "" {
-		t.Log("Correctly detected empty ServerIP")
+	err := validateConfigStructSafe(cfg)
+	if err == nil {
+		t.Error("Expected error for empty ServerIP, got nil")
+	}
+
+	expectedMsg := "server_ip cannot be empty"
+	if err != nil && !strings.Contains(err.Error(), expectedMsg) {
+		t.Errorf("Expected error to contain '%s', got: %v", expectedMsg, err)
 	}
 }
 
@@ -358,10 +362,14 @@ func TestValidateConfigStruct_InvalidUpdateInterval(t *testing.T) {
 			Servers:        []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
 		}
 
-		if cfg.UpdateInterval < 1 {
-			t.Logf("Correctly detected invalid UpdateInterval: %d", interval)
-		} else {
-			t.Errorf("Failed to detect invalid UpdateInterval: %d", interval)
+		err := validateConfigStructSafe(cfg)
+		if err == nil {
+			t.Errorf("Expected error for UpdateInterval %d, got nil", interval)
+		}
+
+		expectedMsg := "update_interval must be at least 1 second"
+		if err != nil && !strings.Contains(err.Error(), expectedMsg) {
+			t.Errorf("Expected error to contain '%s', got: %v", expectedMsg, err)
 		}
 	}
 }
@@ -376,8 +384,14 @@ func TestValidateConfigStruct_EmptyCategoryOrder(t *testing.T) {
 		Servers:        []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
 	}
 
-	if len(cfg.CategoryOrder) == 0 {
-		t.Log("Correctly detected empty CategoryOrder")
+	err := validateConfigStructSafe(cfg)
+	if err == nil {
+		t.Error("Expected error for empty CategoryOrder, got nil")
+	}
+
+	expectedMsg := "category_order cannot be empty"
+	if err != nil && !strings.Contains(err.Error(), expectedMsg) {
+		t.Errorf("Expected error to contain '%s', got: %v", expectedMsg, err)
 	}
 }
 
@@ -394,33 +408,58 @@ func TestValidateConfigStruct_MissingEmoji(t *testing.T) {
 		Servers: []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
 	}
 
-	for _, cat := range cfg.CategoryOrder {
-		if _, exists := cfg.CategoryEmojis[cat]; !exists {
-			t.Logf("Correctly detected missing emoji for category: %s", cat)
-			break
-		}
+	err := validateConfigStructSafe(cfg)
+	if err == nil {
+		t.Error("Expected error for missing category emoji, got nil")
+	}
+
+	expectedMsg := "category 'Touge' is in category_order but missing from category_emojis"
+	if err != nil && !strings.Contains(err.Error(), expectedMsg) {
+		t.Errorf("Expected error to contain '%s', got: %v", expectedMsg, err)
 	}
 }
 
 // TestValidateConfigStruct_InvalidPort tests port validation
 func TestValidateConfigStruct_InvalidPort(t *testing.T) {
-	testCases := []int{0, -1, 65536, 100000}
+	testCases := []struct {
+		name        string
+		port        int
+		shouldError bool
+	}{
+		{"below minimum", 0, true},
+		{"negative port", -1, true},
+		{"above maximum", 65536, true},
+		{"way above maximum", 100000, true},
+		{"minimum valid", 1, false},
+		{"maximum valid", 65535, false},
+		{"common HTTP port", 8080, false},
+	}
 
-	for _, port := range testCases {
-		cfg := &Config{
-			ServerIP:       "192.168.1.1",
-			UpdateInterval: 30,
-			CategoryOrder:  []string{"Drift"},
-			CategoryEmojis: map[string]string{"Drift": "🟣"},
-			Servers:        []Server{{Name: "Test", Port: port, Category: "Drift"}},
-		}
-
-		for _, server := range cfg.Servers {
-			if server.Port < 1 || server.Port > 65535 {
-				t.Logf("Correctly detected invalid port: %d", port)
-				break
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &Config{
+				ServerIP:       "192.168.1.1",
+				UpdateInterval: 30,
+				CategoryOrder:  []string{"Drift"},
+				CategoryEmojis: map[string]string{"Drift": "🟣"},
+				Servers:        []Server{{Name: "Test", Port: tc.port, Category: "Drift"}},
 			}
-		}
+
+			err := validateConfigStructSafe(cfg)
+
+			if tc.shouldError {
+				if err == nil {
+					t.Errorf("Expected error for port %d, got nil", tc.port)
+				}
+				if !strings.Contains(err.Error(), "invalid port") {
+					t.Errorf("Expected 'invalid port' in error, got: %v", err)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Expected no error for port %d, got: %v", tc.port, err)
+				}
+			}
+		})
 	}
 }
 
@@ -434,50 +473,20 @@ func TestValidateConfigStruct_UnknownCategory(t *testing.T) {
 		Servers:        []Server{{Name: "Test", Port: 8081, Category: "Unknown"}},
 	}
 
-	categoryMap := make(map[string]bool)
-	for _, cat := range cfg.CategoryOrder {
-		categoryMap[cat] = true
+	err := validateConfigStructSafe(cfg)
+	if err == nil {
+		t.Error("Expected error for unknown category, got nil")
 	}
 
-	for _, server := range cfg.Servers {
-		if !categoryMap[server.Category] {
-			t.Logf("Correctly detected unknown category: %s", server.Category)
-			break
-		}
-	}
-}
-
-// TestValidateConfigStruct_BoundaryPorts tests boundary port values
-func TestValidateConfigStruct_BoundaryPorts(t *testing.T) {
-	testCases := []struct {
-		port     int
-		expected bool
-	}{
-		{1, true},      // Minimum valid
-		{65535, true},  // Maximum valid
-		{8080, true},   // Common HTTP port
-		{0, false},     // Below minimum
-		{65536, false}, // Above maximum
-	}
-
-	for _, tc := range testCases {
-		valid := tc.port >= 1 && tc.port <= 65535
-		if valid != tc.expected {
-			t.Errorf("Port %d validation failed: expected %v, got %v", tc.port, tc.expected, valid)
-		}
+	expectedMsg := "category 'Unknown' which is not defined in category_order"
+	if err != nil && !strings.Contains(err.Error(), expectedMsg) {
+		t.Errorf("Expected error to contain '%s', got: %v", expectedMsg, err)
 	}
 }
 
 // TestConfigWithCurrentConfigFile tests the actual config.json file
 func TestConfigWithCurrentConfigFile(t *testing.T) {
-	origWd, _ := os.Getwd()
-	defer os.Chdir(origWd)
-
-	// Change to repo directory
-	repoDir := filepath.Join(origWd, "..")
-	os.Chdir(repoDir)
-
-	// Check if config.json exists
+	// Check if config.json exists in current directory
 	if _, err := os.Stat("config.json"); os.IsNotExist(err) {
 		t.Skip("config.json not found, skipping test")
 		return
