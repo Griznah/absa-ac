@@ -547,7 +547,250 @@ Edit `config.json` and add a new server object to the `servers` array:
 - The `category` must exist in the `category_order` array
 - The `port` is the HTTP query port, not the game port (typically game port + 100)
 
+## ConfigManager Architecture
+
+### Overview
+
+The bot uses a thread-safe ConfigManager wrapper to enable dynamic configuration reloading without restart. Config changes are detected via file modification time checks during each status update cycle, allowing near-real-time updates without external dependencies or complex event handling.
+
+### Update Cycle Integration
+
+```
+Every 30 seconds:
+  1. Check config file mtime (main.go:checkAndReloadIfNeeded)
+  2. If changed: Load & Validate -> Atomic swap
+  3. Fetch server info with current config
+  4. Update Discord embed
+```
+
+Config reload checked at the start of each update cycle, before server polling.
+
+### Reload Flow
+
+```
+Config file modified
+  -> checkAndReloadIfNeeded() detects mtime change
+  -> scheduleReload() starts 100ms debounce timer
+  -> performReload() loads and validates new config
+  -> atomic.Value.Store() swaps config atomically
+  -> Next update cycle uses new config
+```
+
+**Debouncing:** Text editors create multiple write events during save. The 100ms debounce timer batches these writes into a single reload attempt, preventing CPU waste and potential race conditions. Still provides near-instant updates from admin perspective.
+
+### Thread-Safety Strategy
+
+**Read-heavy workload:** Config accessed on every server query (every 30 seconds for all servers).
+**Write-light workload:** Config changes rarely (manual admin edits).
+
+- **atomic.Value** stores config pointer for lock-free reads in hot path
+- **sync.RWMutex** protects reload operations (serialized writes)
+- Multiple goroutines can call GetConfig() simultaneously during server polling
+- atomic.Value ensures atomic swap between old and new config (no partial state)
+
+### Validation Failure Recovery
+
+Invalid config never replaces valid config. Bot continues operating with last known good config.
+
+**Failure path:**
+```
+Config file modified
+  -> checkAndReloadIfNeeded() loads file
+  -> validateConfigStructSafeRuntime() returns error
+  -> Error logged: "config validation failed: <details>"
+  -> Old config remains active
+  -> Admin fixes config file
+  -> Next update cycle retries reload
+```
+
+**Validation rules** (from validateConfigStructSafeRuntime in main.go):
+- `server_ip` must be non-empty
+- `update_interval` must be >= 1 second
+- `category_order` must be non-empty array
+- All categories in `category_order` must have emoji in `category_emojis`
+- All servers must have non-empty name, valid port (1-65535), and valid category
+- Server category must exist in `category_order`
+
+### ConfigManager Structure
+
+```go
+type ConfigManager struct {
+    config        atomic.Value // stores *Config (lock-free reads)
+    configPath    string
+    lastModTime   time.Time
+    mu            sync.RWMutex
+    debounceTimer *time.Timer  // Debounces rapid file writes
+}
+```
+
+**Key methods:**
+- `GetConfig() *Config` - Lock-free read via atomic.Value.Load()
+- `checkAndReloadIfNeeded() error` - Called every update cycle, checks mtime
+- `scheduleReload()` - Starts 100ms debounce timer on file change
+- `performReload() error` - Loads, validates, and atomically swaps config
+- `Cleanup()` - Stops debounce timer during shutdown (called from Bot.WaitForShutdown)
+
+### Invariants
+
+**Config consistency:**
+- All config reads see a complete, valid config (never partial state)
+- atomic.Value ensures atomic swap between old and new config
+- Validation runs before swap, never after
+
+**File watching bounds:**
+- Config mtime checked every 30 seconds (update_interval)
+- No more than one reload attempt per 30-second window (per update cycle)
+- Failed reloads don't affect running bot
+
+**Error recovery:**
+- Invalid config never replaces valid config
+- Bot continues operating on last known good config
+- All errors logged but never crash the bot
+
+## Operational Procedures
+
+### Detecting Config Reload Failures
+
+When a config file change is not applied, check the bot logs for these patterns:
+
+```
+config validation failed: <error details>
+failed to reload config: <error reason>
+```
+
+**Verification steps:**
+1. Check log for "Config reloaded successfully" after file modification
+2. Verify bot behavior reflects new config (servers appear/disappear in embed)
+3. If no success log within 30 seconds, check for error messages above
+
+**Common failures:**
+- **JSON syntax error:** "failed to parse config" - Use `jq . config.json` to validate syntax
+- **Missing field:** "server_ip cannot be empty" - Ensure all required fields present
+- **Invalid port:** "invalid port: 70000 (valid range: 1-65535)"
+- **Unknown category:** "category 'X' which is not defined in category_order"
+
+**Recovery procedure:**
+1. Fix the config file error (use `jq . config.json` to validate JSON syntax)
+2. Wait for next update cycle (max 30 seconds)
+3. Verify log shows "Config reloaded successfully"
+4. Check Discord embed reflects new configuration
+
+### Troubleshooting Config Reload
+
+**Config changes not applied:**
+- Symptom: Config file modified but Discord embed doesn't update
+- Diagnosis: `tail -f /var/log/ac-discordbot.log | grep -E "(Config reloaded|config validation)"`
+- Expected logs: "Config reloaded successfully" or "config validation failed: <error>"
+- Common causes: JSON syntax error, invalid port, missing required field, unknown category
+
+**Config reload loop:**
+- Symptom: Continuous "Config reloaded successfully" messages
+- Cause: File system modification time issues (network mounts, time sync)
+- Resolution: Check `stat config.json` stability, consider local file instead of network mount
+
+**No health check endpoint:**
+- Bot does not expose HTTP endpoints for config health checks
+- Monitor logs to verify config reload status
+- Use `grep` or log aggregation to detect reload failures
+
+**Log monitoring example:**
+```bash
+# Alert on validation failures
+tail -f bot.log | grep --line-buffered "config validation failed" | while read line; do
+  echo "ALERT: $line"
+  # Send alert (email, Slack, etc.)
+done
+```
+
+### Testing Config Reload
+
+**Manual testing:**
+```bash
+# Terminal 1: Start bot
+go run main.go
+
+# Terminal 2: Modify config (triggers reload within 30s)
+vim config.json
+
+# Terminal 1: Watch for "Config reloaded successfully" log
+# Verify new servers appear in Discord embed
+```
+
+**Validation failure recovery:**
+```bash
+# Terminal 1: Start bot
+go run main.go
+
+# Terminal 2: Break config with invalid JSON
+echo '{"invalid": json}' > config.json
+
+# Terminal 1: Watch for "config validation failed" error
+# Bot continues running with old config
+
+# Terminal 2: Fix config
+vim config.json  # Fix the JSON
+
+# Terminal 1: Watch for "Config reloaded successfully"
+```
+
+## Design Decisions
+
+### Polling vs Event-Driven Config Watching
+
+**Decision:** Use file modification time polling (every 30 seconds) instead of fsnotify-based event watching.
+
+**Rationale:**
+- Bot already has 30-second update loop → adding file mtime check leverages existing cycle
+- fsnotify adds external dependency and ~150 LOC of event handling code
+- Polling keeps single-file architecture simple
+- 30-second latency acceptable for admin-triggered config changes (not time-critical)
+- Event-driven approach would require separate goroutine and coordination complexity
+
+**Tradeoff:** Max 30-second delay before detecting config changes, but eliminates external dependency and reduces code complexity.
+
+### Read-Only Config Access
+
+**Decision:** Bot detects config changes but never writes config file.
+
+**Rationale:**
+- User requirement confirmed: read-only access
+- Simpler implementation (no file locking or write coordination)
+- Architecture supports adding write capability later without breaking changes
+- Eliminates risk of bot corrupting config file
+
+**Tradeoff:** Cannot persist config changes from runtime, but meets current requirements and maintains simplicity.
+
+### Atomic Config Swap vs Partial Updates
+
+**Decision:** Atomic config swap (full config replacement) instead of field-by-field hot reload.
+
+**Rationale:**
+- Full config duplicated in memory during reload (old + new)
+- Atomic swap requires separate config instances
+- Config is small (~1KB), memory cost negligible
+- Avoids complex partial update logic and inconsistent state risk
+- atomic.Value provides lock-free reads during swap
+
+**Tradeoff:** Memory overhead of full config copy, but eliminates merge logic complexity and ensures consistency.
+
+### Validation Behavior: Startup vs Runtime
+
+**Decision:** Two validation functions with different failure modes.
+
+**Startup behavior** (validateConfigStruct in main.go):
+- Uses `log.Fatalf` for ALL validation failures
+- Terminates bot immediately on invalid config
+- Fail-fast: prevents bot from starting with bad config
+
+**Runtime behavior** (validateConfigStructSafeRuntime in main.go):
+- Returns error instead of calling `log.Fatalf`
+- Safe for runtime validation during config reload
+- Bot continues operating with old config on validation failure
+- Admin can fix config and retry without bot downtime
+
+**Rationale:** Startup validation should be strict (no bad config allowed), but runtime reload should be forgiving (bot must continue operating). This separation prevents a single config typo from breaking production deployment.
+
 ## Dependencies
 
 - `github.com/bwmarrin/discordgo` - Discord API bindings
-- Standard library packages: `net/http`, `context`, `encoding/json`, `time`, `sync`
+- Standard library packages: `net/http`, `context`, `encoding/json`, `time`, `sync`, `os`, `atomic`
