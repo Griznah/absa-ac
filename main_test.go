@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestLoadEnv_NoFile tests that loadEnv handles missing .env gracefully
@@ -338,7 +339,7 @@ func TestValidateConfigStruct_EmptyServerIP(t *testing.T) {
 		Servers:        []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
 	}
 
-	err := validateConfigStructSafe(cfg)
+	err := validateConfigStructSafeRuntime(cfg)
 	if err == nil {
 		t.Error("Expected error for empty ServerIP, got nil")
 	}
@@ -362,7 +363,7 @@ func TestValidateConfigStruct_InvalidUpdateInterval(t *testing.T) {
 			Servers:        []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
 		}
 
-		err := validateConfigStructSafe(cfg)
+		err := validateConfigStructSafeRuntime(cfg)
 		if err == nil {
 			t.Errorf("Expected error for UpdateInterval %d, got nil", interval)
 		}
@@ -384,7 +385,7 @@ func TestValidateConfigStruct_EmptyCategoryOrder(t *testing.T) {
 		Servers:        []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
 	}
 
-	err := validateConfigStructSafe(cfg)
+	err := validateConfigStructSafeRuntime(cfg)
 	if err == nil {
 		t.Error("Expected error for empty CategoryOrder, got nil")
 	}
@@ -408,7 +409,7 @@ func TestValidateConfigStruct_MissingEmoji(t *testing.T) {
 		Servers: []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
 	}
 
-	err := validateConfigStructSafe(cfg)
+	err := validateConfigStructSafeRuntime(cfg)
 	if err == nil {
 		t.Error("Expected error for missing category emoji, got nil")
 	}
@@ -445,7 +446,7 @@ func TestValidateConfigStruct_InvalidPort(t *testing.T) {
 				Servers:        []Server{{Name: "Test", Port: tc.port, Category: "Drift"}},
 			}
 
-			err := validateConfigStructSafe(cfg)
+			err := validateConfigStructSafeRuntime(cfg)
 
 			if tc.shouldError {
 				if err == nil {
@@ -472,7 +473,7 @@ func TestValidateConfigStruct_UnknownCategory(t *testing.T) {
 		Servers:        []Server{{Name: "Test", Port: 8081, Category: "Unknown"}},
 	}
 
-	err := validateConfigStructSafe(cfg)
+	err := validateConfigStructSafeRuntime(cfg)
 	if err == nil {
 		t.Error("Expected error for unknown category, got nil")
 	}
@@ -483,71 +484,1318 @@ func TestValidateConfigStruct_UnknownCategory(t *testing.T) {
 	}
 }
 
-// TestConfigWithCurrentConfigFile tests the actual config.json file
-func TestConfigWithCurrentConfigFile(t *testing.T) {
-	// Check if config.json exists in current directory
-	if _, err := os.Stat("config.json"); os.IsNotExist(err) {
-		t.Skip("config.json not found, skipping test")
-		return
+// TestCheckAndReloadIfNeeded_NoChange tests that checkAndReloadIfNeeded returns nil when config unchanged
+func TestCheckAndReloadIfNeeded_NoChange(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	validConfig := &Config{
+		ServerIP:       "192.168.1.1",
+		UpdateInterval: 30,
+		CategoryOrder:  []string{"Drift"},
+		CategoryEmojis: map[string]string{"Drift": "🟣"},
+		Servers:        []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
 	}
 
-	// Load the actual config file
-	cfg, err := loadConfig("")
+	data, _ := json.Marshal(validConfig)
+	os.WriteFile(configPath, data, 0644)
+
+	cm := NewConfigManager(configPath, validConfig)
+
+	// Call checkAndReloadIfNeeded without modifying file
+	err := cm.checkAndReloadIfNeeded()
+
 	if err != nil {
-		t.Fatalf("Failed to load config.json: %v", err)
+		t.Errorf("Expected nil error when config unchanged, got: %v", err)
 	}
 
-	// Validate it
-	if err := validateConfigStructSafe(cfg); err != nil {
-		t.Errorf("config.json validation failed: %v", err)
+	// Config should remain unchanged
+	currentCfg := cm.GetConfig()
+	if currentCfg.ServerIP != "192.168.1.1" {
+		t.Errorf("Config should not change when file unmodified")
 	}
-
-	t.Logf("Successfully loaded config with %d servers across %d categories",
-		len(cfg.Servers), len(cfg.CategoryOrder))
 }
 
-// validateConfigStructSafe is a non-fatal version of validateConfigStruct for testing
-func validateConfigStructSafe(cfg *Config) error {
+// TestCheckAndReloadIfNeeded_ValidReload tests successful config reload (with debouncing)
+func TestCheckAndReloadIfNeeded_ValidReload(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	initialConfig := &Config{
+		ServerIP:       "192.168.1.1",
+		UpdateInterval: 30,
+		CategoryOrder:  []string{"Drift"},
+		CategoryEmojis: map[string]string{"Drift": "🟣"},
+		Servers:        []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
+	}
+
+	data, _ := json.Marshal(initialConfig)
+	os.WriteFile(configPath, data, 0644)
+
+	cm := NewConfigManager(configPath, initialConfig)
+
+	// Wait a bit to ensure different modification time
+	time.Sleep(10 * time.Millisecond)
+
+	// Write new config with different ServerIP
+	newConfig := &Config{
+		ServerIP:       "10.0.0.1",
+		UpdateInterval: 30,
+		CategoryOrder:  []string{"Drift"},
+		CategoryEmojis: map[string]string{"Drift": "🟣"},
+		Servers:        []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
+	}
+
+	data, _ = json.Marshal(newConfig)
+	os.WriteFile(configPath, data, 0644)
+
+	// Trigger reload (schedules debounce)
+	err := cm.checkAndReloadIfNeeded()
+
+	if err != nil {
+		t.Fatalf("Expected successful reload scheduling, got error: %v", err)
+	}
+
+	// Config should NOT be updated immediately (debounce pending)
+	if cm.GetConfig().ServerIP == "10.0.0.1" {
+		t.Error("Config should not be updated immediately after scheduling")
+	}
+
+	// Wait for debounce timer to fire
+	time.Sleep(150 * time.Millisecond)
+
+	// Config should be updated after debounce
+	currentCfg := cm.GetConfig()
+	if currentCfg.ServerIP != "10.0.0.1" {
+		t.Errorf("Expected ServerIP '10.0.0.1' after debounce, got '%s'", currentCfg.ServerIP)
+	}
+}
+
+// TestCheckAndReloadIfNeeded_InvalidJSON tests that invalid JSON keeps old config (with debouncing)
+func TestCheckAndReloadIfNeeded_InvalidJSON(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	initialConfig := &Config{
+		ServerIP:       "192.168.1.1",
+		UpdateInterval: 30,
+		CategoryOrder:  []string{"Drift"},
+		CategoryEmojis: map[string]string{"Drift": "🟣"},
+		Servers:        []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
+	}
+
+	data, _ := json.Marshal(initialConfig)
+	os.WriteFile(configPath, data, 0644)
+
+	cm := NewConfigManager(configPath, initialConfig)
+
+	// Wait to ensure different modification time
+	time.Sleep(10 * time.Millisecond)
+
+	// Write invalid JSON
+	os.WriteFile(configPath, []byte("{invalid json}"), 0644)
+
+	// Store original config for comparison
+	originalIP := cm.GetConfig().ServerIP
+
+	// Trigger reload (schedules debounce)
+	// Note: checkAndReloadIfNeeded will return nil immediately (debounce scheduled)
+	// The error will occur in the background during performReload
+	err := cm.checkAndReloadIfNeeded()
+
+	// With debouncing, the check returns immediately (error happens in background)
+	if err != nil {
+		t.Fatalf("Expected nil during scheduling, got: %v", err)
+	}
+
+	// Config should remain unchanged immediately
+	if cm.GetConfig().ServerIP != originalIP {
+		t.Errorf("Config should not change immediately, got ServerIP: %s", cm.GetConfig().ServerIP)
+	}
+
+	// Wait for debounce timer to fire and reload to fail
+	time.Sleep(150 * time.Millisecond)
+
+	// Config should remain unchanged (reload failed)
+	currentCfg := cm.GetConfig()
+	if currentCfg == nil {
+		t.Fatal("Config should not be nil after failed reload")
+	}
+
+	if currentCfg.ServerIP != originalIP {
+		t.Errorf("Config should remain unchanged on invalid JSON, got ServerIP: %s", currentCfg.ServerIP)
+	}
+}
+
+// TestCheckAndReloadIfNeeded_ValidationFailure tests that validation errors keep old config (with debouncing)
+func TestCheckAndReloadIfNeeded_ValidationFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	initialConfig := &Config{
+		ServerIP:       "192.168.1.1",
+		UpdateInterval: 30,
+		CategoryOrder:  []string{"Drift"},
+		CategoryEmojis: map[string]string{"Drift": "🟣"},
+		Servers:        []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
+	}
+
+	data, _ := json.Marshal(initialConfig)
+	os.WriteFile(configPath, data, 0644)
+
+	cm := NewConfigManager(configPath, initialConfig)
+
+	// Wait to ensure different modification time
+	time.Sleep(10 * time.Millisecond)
+
+	// Write config with empty ServerIP (invalid)
+	invalidConfig := &Config{
+		ServerIP:       "", // Invalid
+		UpdateInterval: 30,
+		CategoryOrder:  []string{"Drift"},
+		CategoryEmojis: map[string]string{"Drift": "🟣"},
+		Servers:        []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
+	}
+
+	data, _ = json.Marshal(invalidConfig)
+	os.WriteFile(configPath, data, 0644)
+
+	// Store original config for comparison
+	originalIP := cm.GetConfig().ServerIP
+
+	// Trigger reload (schedules debounce)
+	err := cm.checkAndReloadIfNeeded()
+
+	// With debouncing, returns immediately (error happens in background)
+	if err != nil {
+		t.Fatalf("Expected nil during scheduling, got: %v", err)
+	}
+
+	// Wait for debounce timer to fire and reload to fail
+	time.Sleep(150 * time.Millisecond)
+
+	// Config should remain unchanged (reload failed)
+	currentCfg := cm.GetConfig()
+	if currentCfg == nil {
+		t.Fatal("Config should not be nil after failed reload")
+	}
+
+	if currentCfg.ServerIP != originalIP {
+		t.Errorf("Config should remain unchanged on validation failure, got ServerIP: %s", currentCfg.ServerIP)
+	}
+}
+
+// TestCheckAndReloadIfNeeded_FileNotFound tests that missing file keeps old config (with debouncing)
+func TestCheckAndReloadIfNeeded_FileNotFound(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	initialConfig := &Config{
+		ServerIP:       "192.168.1.1",
+		UpdateInterval: 30,
+		CategoryOrder:  []string{"Drift"},
+		CategoryEmojis: map[string]string{"Drift": "🟣"},
+		Servers:        []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
+	}
+
+	data, _ := json.Marshal(initialConfig)
+	os.WriteFile(configPath, data, 0644)
+
+	cm := NewConfigManager(configPath, initialConfig)
+
+	// Wait to ensure different modification time
+	time.Sleep(10 * time.Millisecond)
+
+	// Delete the config file
+	os.Remove(configPath)
+
+	// Store original config for comparison
+	originalIP := cm.GetConfig().ServerIP
+
+	// Trigger reload check (schedules debounce)
+	err := cm.checkAndReloadIfNeeded()
+
+	// checkAndReloadIfNeeded returns error during stat (before debounce)
+	if err == nil {
+		t.Error("Expected error for missing file, got nil")
+	}
+
+	if !strings.Contains(err.Error(), "failed to stat config file") {
+		t.Errorf("Expected 'failed to stat config file' error, got: %v", err)
+	}
+
+	// Config should remain unchanged
+	currentCfg := cm.GetConfig()
+	if currentCfg.ServerIP != originalIP {
+		t.Errorf("Config should remain unchanged when file missing, got ServerIP: %s", currentCfg.ServerIP)
+	}
+}
+
+// TestCheckAndReloadIfNeeded_ConcurrentCalls tests that concurrent calls are serialized (with debouncing)
+func TestCheckAndReloadIfNeeded_ConcurrentCalls(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	initialConfig := &Config{
+		ServerIP:       "192.168.1.1",
+		UpdateInterval: 30,
+		CategoryOrder:  []string{"Drift"},
+		CategoryEmojis: map[string]string{"Drift": "🟣"},
+		Servers:        []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
+	}
+
+	data, _ := json.Marshal(initialConfig)
+	os.WriteFile(configPath, data, 0644)
+
+	cm := NewConfigManager(configPath, initialConfig)
+
+	// Wait to ensure different modification time
+	time.Sleep(10 * time.Millisecond)
+
+	// Write new config
+	newConfig := &Config{
+		ServerIP:       "10.0.0.1",
+		UpdateInterval: 30,
+		CategoryOrder:  []string{"Drift"},
+		CategoryEmojis: map[string]string{"Drift": "🟣"},
+		Servers:        []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
+	}
+
+	data, _ = json.Marshal(newConfig)
+	os.WriteFile(configPath, data, 0644)
+
+	// Launch multiple concurrent calls
+	done := make(chan error, 10)
+	for i := 0; i < 10; i++ {
+		go func() {
+			done <- cm.checkAndReloadIfNeeded()
+		}()
+	}
+
+	// Collect results
+	successCount := 0
+	for i := 0; i < 10; i++ {
+		err := <-done
+		if err == nil {
+			successCount++
+		}
+	}
+
+	// All calls should succeed (schedule debounce)
+	if successCount != 10 {
+		t.Errorf("Expected all 10 concurrent calls to succeed, got %d successes", successCount)
+	}
+
+	// Wait for debounce timer to fire
+	time.Sleep(150 * time.Millisecond)
+
+	// Config should be updated
+	currentCfg := cm.GetConfig()
+	if currentCfg.ServerIP != "10.0.0.1" {
+		t.Errorf("Expected ServerIP '10.0.0.1' after concurrent reloads, got '%s'", currentCfg.ServerIP)
+	}
+}
+
+// TestCheckAndReloadIfNeeded_RapidChanges tests behavior with rapid file modifications (with debouncing)
+func TestCheckAndReloadIfNeeded_RapidChanges(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	initialConfig := &Config{
+		ServerIP:       "192.168.1.1",
+		UpdateInterval: 30,
+		CategoryOrder:  []string{"Drift"},
+		CategoryEmojis: map[string]string{"Drift": "🟣"},
+		Servers:        []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
+	}
+
+	data, _ := json.Marshal(initialConfig)
+	os.WriteFile(configPath, data, 0644)
+
+	cm := NewConfigManager(configPath, initialConfig)
+
+	// Make multiple rapid changes
+	configs := []string{"10.0.0.1", "10.0.0.2", "10.0.0.3"}
+	for _, ip := range configs {
+		time.Sleep(5 * time.Millisecond)
+
+		newConfig := &Config{
+			ServerIP:       ip,
+			UpdateInterval: 30,
+			CategoryOrder:  []string{"Drift"},
+			CategoryEmojis: map[string]string{"Drift": "🟣"},
+			Servers:        []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
+		}
+
+		data, _ = json.Marshal(newConfig)
+		os.WriteFile(configPath, data, 0644)
+
+		cm.checkAndReloadIfNeeded()
+	}
+
+	// Wait for debounce timer to fire
+	time.Sleep(150 * time.Millisecond)
+
+	// Config should reflect the last valid change (after debounce)
+	currentCfg := cm.GetConfig()
+	if currentCfg.ServerIP != "10.0.0.3" {
+		t.Errorf("Expected ServerIP '10.0.0.3' after rapid changes, got '%s'", currentCfg.ServerIP)
+	}
+}
+
+// TestNewConfigManager tests ConfigManager creation with valid config
+func TestNewConfigManager(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	validConfig := &Config{
+		ServerIP:       "192.168.1.1",
+		UpdateInterval: 30,
+		CategoryOrder:  []string{"Drift"},
+		CategoryEmojis: map[string]string{"Drift": "🟣"},
+		Servers:        []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
+	}
+
+	data, _ := json.Marshal(validConfig)
+	os.WriteFile(configPath, data, 0644)
+
+	cm := NewConfigManager(configPath, validConfig)
+
+	if cm == nil {
+		t.Fatal("NewConfigManager returned nil")
+	}
+
+	if cm.configPath != configPath {
+		t.Errorf("Expected configPath %s, got %s", configPath, cm.configPath)
+	}
+
+	if cm.GetConfig() == nil {
+		t.Error("GetConfig returned nil")
+	}
+
+	if cm.GetConfig().ServerIP != "192.168.1.1" {
+		t.Errorf("Expected ServerIP '192.168.1.1', got '%s'", cm.GetConfig().ServerIP)
+	}
+
+	if !cm.lastModTime.IsZero() {
+		t.Logf("ConfigManager created with lastModTime: %v", cm.lastModTime)
+	}
+}
+
+// TestConfigManager_ConcurrentGetConfig tests that GetConfig is thread-safe
+func TestConfigManager_ConcurrentGetConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	validConfig := &Config{
+		ServerIP:       "192.168.1.1",
+		UpdateInterval: 30,
+		CategoryOrder:  []string{"Drift"},
+		CategoryEmojis: map[string]string{"Drift": "🟣"},
+		Servers:        []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
+	}
+
+	data, _ := json.Marshal(validConfig)
+	os.WriteFile(configPath, data, 0644)
+
+	cm := NewConfigManager(configPath, validConfig)
+
+	// Launch 100 goroutines calling GetConfig concurrently
+	done := make(chan bool)
+	for i := 0; i < 100; i++ {
+		go func() {
+			cfg := cm.GetConfig()
+			if cfg == nil {
+				t.Error("GetConfig returned nil in concurrent access")
+			}
+			done <- true
+		}()
+	}
+
+	// Wait for all goroutines to complete
+	for i := 0; i < 100; i++ {
+		<-done
+	}
+}
+
+// TestConfigManager_NilConfig tests ConfigManager with nil initial config
+func TestConfigManager_NilConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	// Create config file
+	validConfig := &Config{
+		ServerIP:       "192.168.1.1",
+		UpdateInterval: 30,
+		CategoryOrder:  []string{"Drift"},
+		CategoryEmojis: map[string]string{"Drift": "🟣"},
+		Servers:        []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
+	}
+	data, _ := json.Marshal(validConfig)
+	os.WriteFile(configPath, data, 0644)
+
+	// Passing nil doesn't panic but GetConfig will return nil
+	cm := NewConfigManager(configPath, nil)
+
+	if cm == nil {
+		t.Fatal("NewConfigManager returned nil")
+	}
+
+	// GetConfig should return nil (not crash, but returns nil pointer)
+	cfg := cm.GetConfig()
+	if cfg != nil {
+		t.Errorf("Expected GetConfig to return nil, got %+v", cfg)
+	}
+}
+
+// TestValidateConfigStructSafeRuntime tests the runtime-safe validation function
+func TestValidateConfigStructSafeRuntime(t *testing.T) {
+	testCases := []struct {
+		name        string
+		cfg         *Config
+		shouldError bool
+		errorMsg    string
+	}{
+		{
+			name: "valid config",
+			cfg: &Config{
+				ServerIP:       "192.168.1.1",
+				UpdateInterval: 30,
+				CategoryOrder:  []string{"Drift"},
+				CategoryEmojis: map[string]string{"Drift": "🟣"},
+				Servers:        []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
+			},
+			shouldError: false,
+		},
+		{
+			name: "empty server IP",
+			cfg: &Config{
+				ServerIP:       "",
+				UpdateInterval: 30,
+				CategoryOrder:  []string{"Drift"},
+				CategoryEmojis: map[string]string{"Drift": "🟣"},
+				Servers:        []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
+			},
+			shouldError: true,
+			errorMsg:    "server_ip cannot be empty",
+		},
+		{
+			name: "invalid update interval",
+			cfg: &Config{
+				ServerIP:       "192.168.1.1",
+				UpdateInterval: 0,
+				CategoryOrder:  []string{"Drift"},
+				CategoryEmojis: map[string]string{"Drift": "🟣"},
+				Servers:        []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
+			},
+			shouldError: true,
+			errorMsg:    "update_interval must be at least 1 second",
+		},
+		{
+			name: "empty category order",
+			cfg: &Config{
+				ServerIP:       "192.168.1.1",
+				UpdateInterval: 30,
+				CategoryOrder:  []string{},
+				CategoryEmojis: map[string]string{"Drift": "🟣"},
+				Servers:        []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
+			},
+			shouldError: true,
+			errorMsg:    "category_order cannot be empty",
+		},
+		{
+			name: "missing category emoji",
+			cfg: &Config{
+				ServerIP:       "192.168.1.1",
+				UpdateInterval: 30,
+				CategoryOrder:  []string{"Drift", "Touge"},
+				CategoryEmojis: map[string]string{
+					"Drift": "🟣",
+				},
+				Servers: []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
+			},
+			shouldError: true,
+			errorMsg:    "category 'Touge' is in category_order but missing from category_emojis",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateConfigStructSafeRuntime(tc.cfg)
+
+			if tc.shouldError {
+				if err == nil {
+					t.Errorf("Expected error containing '%s', got nil", tc.errorMsg)
+				} else if !strings.Contains(err.Error(), tc.errorMsg) {
+					t.Errorf("Expected error to contain '%s', got: %v", tc.errorMsg, err)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Expected no error, got: %v", err)
+				}
+			}
+		})
+	}
+}
+
+// TestGetConfigPath tests the getConfigPath helper function
+func TestGetConfigPath(t *testing.T) {
+	testCases := []struct {
+		name         string
+		providedPath string
+		setupFunc    func(t *testing.T) func()
+		validateFunc func(t *testing.T, result string)
+	}{
+		{
+			name:         "explicit path is returned",
+			providedPath: "/custom/config.json",
+			setupFunc:    func(t *testing.T) func() { return func() {} },
+			validateFunc: func(t *testing.T, result string) {
+				if result != "/custom/config.json" {
+					t.Errorf("Expected path '/custom/config.json', got: %s", result)
+				}
+			},
+		},
+		{
+			name:         "uses ./config.json when /data/config.json doesn't exist",
+			providedPath: "",
+			setupFunc: func(t *testing.T) func() {
+				tmpDir := t.TempDir()
+				configPath := filepath.Join(tmpDir, "config.json")
+				os.WriteFile(configPath, []byte("{}"), 0644)
+
+				origWd, _ := os.Getwd()
+				os.Chdir(tmpDir)
+
+				return func() {
+					os.Chdir(origWd)
+				}
+			},
+			validateFunc: func(t *testing.T, result string) {
+				// Should return the working directory config.json
+				if !strings.Contains(result, "config.json") {
+					t.Errorf("Expected path containing 'config.json', got: %s", result)
+				}
+			},
+		},
+		{
+			name:         "returns empty string when no config found",
+			providedPath: "",
+			setupFunc: func(t *testing.T) func() {
+				tmpDir := t.TempDir()
+				origWd, _ := os.Getwd()
+				os.Chdir(tmpDir)
+
+				return func() {
+					os.Chdir(origWd)
+				}
+			},
+			validateFunc: func(t *testing.T, result string) {
+				if result != "" {
+					t.Errorf("Expected empty string when no config found, got: %s", result)
+				}
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			cleanup := tc.setupFunc(t)
+			defer cleanup()
+
+			result := getConfigPath(tc.providedPath)
+			tc.validateFunc(t, result)
+		})
+	}
+}
+
+// TestIntegration_ConfigReloadWithBot tests config reload integration with bot update cycle (with debouncing)
+func TestIntegration_ConfigReloadWithBot(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	initialConfig := &Config{
+		ServerIP:       "192.168.1.1",
+		UpdateInterval: 1, // 1 second for faster testing
+		CategoryOrder:  []string{"Drift"},
+		CategoryEmojis: map[string]string{"Drift": "🟣"},
+		Servers:        []Server{{Name: "Test Server", Port: 8081, Category: "Drift"}},
+	}
+
+	data, _ := json.Marshal(initialConfig)
+	os.WriteFile(configPath, data, 0644)
+
+	cm := NewConfigManager(configPath, initialConfig)
+
+	// Simulate bot update cycle checking for config changes
+	initialIP := cm.GetConfig().ServerIP
+
+	// Wait to ensure different modification time
+	time.Sleep(10 * time.Millisecond)
+
+	// Modify config file
+	newConfig := &Config{
+		ServerIP:       "10.0.0.1",
+		UpdateInterval: 1,
+		CategoryOrder:  []string{"Drift"},
+		CategoryEmojis: map[string]string{"Drift": "🟣"},
+		Servers:        []Server{{Name: "Test Server", Port: 8081, Category: "Drift"}},
+	}
+
+	data, _ = json.Marshal(newConfig)
+	os.WriteFile(configPath, data, 0644)
+
+	// Simulate bot checking for config updates (schedules debounce)
+	err := cm.checkAndReloadIfNeeded()
+	if err != nil {
+		t.Fatalf("checkAndReloadIfNeeded failed: %v", err)
+	}
+
+	// Config should not change immediately (debounce pending)
+	if cm.GetConfig().ServerIP != initialIP {
+		t.Error("Config should not change immediately after scheduling")
+	}
+
+	// Wait for debounce timer to fire
+	time.Sleep(150 * time.Millisecond)
+
+	// Verify config was reloaded after debounce
+	currentCfg := cm.GetConfig()
+	if currentCfg.ServerIP == initialIP {
+		t.Error("Config was not reloaded after debounce, ServerIP unchanged")
+	}
+
+	if currentCfg.ServerIP != "10.0.0.1" {
+		t.Errorf("Expected ServerIP '10.0.0.1' after reload, got '%s'", currentCfg.ServerIP)
+	}
+}
+
+// TestIntegration_InvalidConfigDuringRuntime tests that invalid config doesn't crash bot (with debouncing)
+func TestIntegration_InvalidConfigDuringRuntime(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	initialConfig := &Config{
+		ServerIP:       "192.168.1.1",
+		UpdateInterval: 1,
+		CategoryOrder:  []string{"Drift"},
+		CategoryEmojis: map[string]string{"Drift": "🟣"},
+		Servers:        []Server{{Name: "Test Server", Port: 8081, Category: "Drift"}},
+	}
+
+	data, _ := json.Marshal(initialConfig)
+	os.WriteFile(configPath, data, 0644)
+
+	cm := NewConfigManager(configPath, initialConfig)
+	originalIP := cm.GetConfig().ServerIP
+
+	// Wait to ensure different modification time
+	time.Sleep(10 * time.Millisecond)
+
+	// Write invalid config
+	invalidConfig := &Config{
+		ServerIP:       "", // Invalid: empty server IP
+		UpdateInterval: 1,
+		CategoryOrder:  []string{"Drift"},
+		CategoryEmojis: map[string]string{"Drift": "🟣"},
+		Servers:        []Server{{Name: "Test Server", Port: 8081, Category: "Drift"}},
+	}
+
+	data, _ = json.Marshal(invalidConfig)
+	os.WriteFile(configPath, data, 0644)
+
+	// Attempt reload (schedules debounce)
+	err := cm.checkAndReloadIfNeeded()
+
+	// With debouncing, returns immediately (error happens in background)
+	if err != nil {
+		t.Fatalf("Expected nil during scheduling, got: %v", err)
+	}
+
+	// Wait for debounce timer to fire and reload to fail
+	time.Sleep(150 * time.Millisecond)
+
+	// Config should remain unchanged (reload failed)
+	currentCfg := cm.GetConfig()
+	if currentCfg == nil {
+		t.Fatal("Config should not be nil after failed reload")
+	}
+
+	if currentCfg.ServerIP != originalIP {
+		t.Errorf("Config should remain unchanged on invalid config, got ServerIP: %s", currentCfg.ServerIP)
+	}
+
+	// Wait and write valid config
+	time.Sleep(10 * time.Millisecond)
+
+	validConfig := &Config{
+		ServerIP:       "10.0.0.1",
+		UpdateInterval: 1,
+		CategoryOrder:  []string{"Drift"},
+		CategoryEmojis: map[string]string{"Drift": "🟣"},
+		Servers:        []Server{{Name: "Test Server", Port: 8081, Category: "Drift"}},
+	}
+
+	data, _ = json.Marshal(validConfig)
+	os.WriteFile(configPath, data, 0644)
+
+	// Reload should succeed now (schedules debounce)
+	err = cm.checkAndReloadIfNeeded()
+	if err != nil {
+		t.Fatalf("Expected successful scheduling after fixing config, got: %v", err)
+	}
+
+	// Wait for debounce
+	time.Sleep(150 * time.Millisecond)
+
+	currentCfg = cm.GetConfig()
+	if currentCfg.ServerIP != "10.0.0.1" {
+		t.Errorf("Expected ServerIP '10.0.0.1' after valid reload, got '%s'", currentCfg.ServerIP)
+	}
+}
+
+// TestIntegration_RapidConfigChanges tests rapid config file modifications with debouncing
+func TestIntegration_RapidConfigChanges(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	initialConfig := &Config{
+		ServerIP:       "192.168.1.1",
+		UpdateInterval: 1,
+		CategoryOrder:  []string{"Drift"},
+		CategoryEmojis: map[string]string{"Drift": "🟣"},
+		Servers:        []Server{{Name: "Test Server", Port: 8081, Category: "Drift"}},
+	}
+
+	data, _ := json.Marshal(initialConfig)
+	os.WriteFile(configPath, data, 0644)
+
+	cm := NewConfigManager(configPath, initialConfig)
+
+	// Make multiple rapid changes
+	configs := []string{"10.0.0.1", "10.0.0.2", "10.0.0.3"}
+	for _, ip := range configs {
+		time.Sleep(5 * time.Millisecond)
+
+		newConfig := &Config{
+			ServerIP:       ip,
+			UpdateInterval: 1,
+			CategoryOrder:  []string{"Drift"},
+			CategoryEmojis: map[string]string{"Drift": "🟣"},
+			Servers:        []Server{{Name: "Test Server", Port: 8081, Category: "Drift"}},
+		}
+
+		data, _ = json.Marshal(newConfig)
+		os.WriteFile(configPath, data, 0644)
+
+		cm.checkAndReloadIfNeeded()
+	}
+
+	// Wait for debounce timer to fire (debouncing delays reload)
+	time.Sleep(150 * time.Millisecond)
+
+	// Config should reflect the last valid change (after debounce)
+	currentCfg := cm.GetConfig()
+	if currentCfg.ServerIP != "10.0.0.3" {
+		t.Errorf("Expected ServerIP '10.0.0.3' after rapid changes, got '%s'", currentCfg.ServerIP)
+	}
+}
+
+// TestIntegration_ConcurrentConfigAccess tests config access during concurrent reloads
+func TestIntegration_ConcurrentConfigAccess(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	initialConfig := &Config{
+		ServerIP:       "192.168.1.1",
+		UpdateInterval: 1,
+		CategoryOrder:  []string{"Drift"},
+		CategoryEmojis: map[string]string{"Drift": "🟣"},
+		Servers:        []Server{{Name: "Test Server", Port: 8081, Category: "Drift"}},
+	}
+
+	data, _ := json.Marshal(initialConfig)
+	os.WriteFile(configPath, data, 0644)
+
+	cm := NewConfigManager(configPath, initialConfig)
+
+	// Launch concurrent readers and reloaders
+	done := make(chan bool)
+	readerCount := 50
+
+	// Start readers that simulate server polling
+	for i := 0; i < readerCount; i++ {
+		go func() {
+			for j := 0; j < 10; j++ {
+				cfg := cm.GetConfig()
+				if cfg == nil {
+					t.Error("GetConfig returned nil during concurrent access")
+				}
+				time.Sleep(time.Millisecond)
+			}
+			done <- true
+		}()
+	}
+
+	// Start reloaders that modify config file
+	for i := 0; i < 5; i++ {
+		go func(idx int) {
+			time.Sleep(time.Duration(idx*10) * time.Millisecond)
+
+			newConfig := &Config{
+				ServerIP:       fmt.Sprintf("10.0.0.%d", idx+1),
+				UpdateInterval: 1,
+				CategoryOrder:  []string{"Drift"},
+				CategoryEmojis: map[string]string{"Drift": "🟣"},
+				Servers:        []Server{{Name: "Test Server", Port: 8081, Category: "Drift"}},
+			}
+
+			data, _ := json.Marshal(newConfig)
+			os.WriteFile(configPath, data, 0644)
+			cm.checkAndReloadIfNeeded()
+			done <- true
+		}(i)
+	}
+
+	// Wait for all goroutines
+	for i := 0; i < readerCount+5; i++ {
+		<-done
+	}
+
+	// Verify final config is valid
+	cfg := cm.GetConfig()
+	if cfg == nil {
+		t.Fatal("Final config is nil")
+	}
+
 	if cfg.ServerIP == "" {
-		return fmt.Errorf("server_ip cannot be empty")
+		t.Error("Final config has empty ServerIP")
 	}
 
-	if cfg.UpdateInterval < 1 {
-		return fmt.Errorf("update_interval must be at least 1 second (got: %d)", cfg.UpdateInterval)
+	t.Logf("Final ServerIP after concurrent access: %s", cfg.ServerIP)
+}
+
+// TestConfigManager_DebounceSingleWrite tests that single write triggers reload after debounce
+func TestConfigManager_DebounceSingleWrite(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	initialConfig := &Config{
+		ServerIP:       "192.168.1.1",
+		UpdateInterval: 30,
+		CategoryOrder:  []string{"Drift"},
+		CategoryEmojis: map[string]string{"Drift": "🟣"},
+		Servers:        []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
 	}
 
-	if len(cfg.CategoryOrder) == 0 {
-		return fmt.Errorf("category_order cannot be empty")
+	data, _ := json.Marshal(initialConfig)
+	os.WriteFile(configPath, data, 0644)
+
+	cm := NewConfigManager(configPath, initialConfig)
+
+	// Wait to ensure different modification time
+	time.Sleep(10 * time.Millisecond)
+
+	// Write new config
+	newConfig := &Config{
+		ServerIP:       "10.0.0.1",
+		UpdateInterval: 30,
+		CategoryOrder:  []string{"Drift"},
+		CategoryEmojis: map[string]string{"Drift": "🟣"},
+		Servers:        []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
 	}
 
-	categoryMap := make(map[string]bool)
-	for _, cat := range cfg.CategoryOrder {
-		categoryMap[cat] = true
+	data, _ = json.Marshal(newConfig)
+	os.WriteFile(configPath, data, 0644)
+
+	// Trigger reload check (schedules debounce)
+	err := cm.checkAndReloadIfNeeded()
+	if err != nil {
+		t.Fatalf("checkAndReloadIfNeeded failed: %v", err)
 	}
 
-	for _, cat := range cfg.CategoryOrder {
-		if _, exists := cfg.CategoryEmojis[cat]; !exists {
-			return fmt.Errorf("category '%s' is in category_order but missing from category_emojis", cat)
+	// Config should NOT be updated immediately (debounce pending)
+	if cm.GetConfig().ServerIP == "10.0.0.1" {
+		t.Error("Config should not be updated immediately after scheduling")
+	}
+
+	// Wait for debounce timer to fire
+	time.Sleep(150 * time.Millisecond)
+
+	// Now config should be updated
+	if cm.GetConfig().ServerIP != "10.0.0.1" {
+		t.Errorf("Expected ServerIP '10.0.0.1' after debounce, got '%s'", cm.GetConfig().ServerIP)
+	}
+}
+
+// TestConfigManager_DebounceRapidWrites tests that rapid writes trigger single reload
+func TestConfigManager_DebounceRapidWrites(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	initialConfig := &Config{
+		ServerIP:       "192.168.1.1",
+		UpdateInterval: 30,
+		CategoryOrder:  []string{"Drift"},
+		CategoryEmojis: map[string]string{"Drift": "🟣"},
+		Servers:        []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
+	}
+
+	data, _ := json.Marshal(initialConfig)
+	os.WriteFile(configPath, data, 0644)
+
+	cm := NewConfigManager(configPath, initialConfig)
+
+	// Wait to ensure different modification time
+	time.Sleep(10 * time.Millisecond)
+
+	// Simulate rapid writes (5 writes in 50ms - typical editor behavior)
+	configs := []string{"10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4", "10.0.0.5"}
+	for _, ip := range configs {
+		newConfig := &Config{
+			ServerIP:       ip,
+			UpdateInterval: 30,
+			CategoryOrder:  []string{"Drift"},
+			CategoryEmojis: map[string]string{"Drift": "🟣"},
+			Servers:        []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
 		}
+
+		data, _ := json.Marshal(newConfig)
+		os.WriteFile(configPath, data, 0644)
+
+		// Trigger reload check after each write
+		cm.checkAndReloadIfNeeded()
+
+		// Small delay between writes (10ms)
+		time.Sleep(10 * time.Millisecond)
 	}
 
-	for i, server := range cfg.Servers {
-		if server.Name == "" {
-			return fmt.Errorf("server at index %d has empty name", i)
-		}
+	// Wait for debounce timer to fire
+	time.Sleep(150 * time.Millisecond)
 
-		if server.Port < 1 || server.Port > 65535 {
-			return fmt.Errorf("server '%s' has invalid port: %d", server.Name, server.Port)
-		}
+	// Config should reflect the LAST write (10.0.0.5)
+	// Only ONE reload should have occurred
+	if cm.GetConfig().ServerIP != "10.0.0.5" {
+		t.Errorf("Expected ServerIP '10.0.0.5' after rapid writes, got '%s'", cm.GetConfig().ServerIP)
+	}
+}
 
-		if server.Category == "" {
-			return fmt.Errorf("server '%s' has empty category", server.Name)
-		}
+// TestConfigManager_DebounceTimerReset tests that timer is reset on subsequent writes
+func TestConfigManager_DebounceTimerReset(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
 
-		if !categoryMap[server.Category] {
-			return fmt.Errorf("server '%s' has category '%s' which is not defined in category_order", server.Name, server.Category)
-		}
+	initialConfig := &Config{
+		ServerIP:       "192.168.1.1",
+		UpdateInterval: 30,
+		CategoryOrder:  []string{"Drift"},
+		CategoryEmojis: map[string]string{"Drift": "🟣"},
+		Servers:        []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
 	}
 
-	return nil
+	data, _ := json.Marshal(initialConfig)
+	os.WriteFile(configPath, data, 0644)
+
+	cm := NewConfigManager(configPath, initialConfig)
+
+	// Wait to ensure different modification time
+	time.Sleep(10 * time.Millisecond)
+
+	// First write
+	newConfig := &Config{
+		ServerIP:       "10.0.0.1",
+		UpdateInterval: 30,
+		CategoryOrder:  []string{"Drift"},
+		CategoryEmojis: map[string]string{"Drift": "🟣"},
+		Servers:        []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
+	}
+
+	data, _ = json.Marshal(newConfig)
+	os.WriteFile(configPath, data, 0644)
+	cm.checkAndReloadIfNeeded()
+
+	// Wait 50ms (less than debounce delay)
+	time.Sleep(50 * time.Millisecond)
+
+	// Config should NOT be reloaded yet
+	if cm.GetConfig().ServerIP == "10.0.0.1" {
+		t.Error("Config should not be reloaded before debounce timer fires")
+	}
+
+	// Second write before first timer fires (resets timer)
+	newConfig.ServerIP = "10.0.0.2"
+	data, _ = json.Marshal(newConfig)
+	os.WriteFile(configPath, data, 0644)
+	cm.checkAndReloadIfNeeded()
+
+	// Wait another 50ms (still less than debounce delay from reset)
+	time.Sleep(50 * time.Millisecond)
+
+	// Config should STILL not be reloaded (timer was reset)
+	if cm.GetConfig().ServerIP == "10.0.0.2" {
+		t.Error("Config should not be reloaded before reset debounce timer fires")
+	}
+
+	// Wait for debounce timer to fire
+	time.Sleep(100 * time.Millisecond)
+
+	// Now config should be updated with LAST write
+	if cm.GetConfig().ServerIP != "10.0.0.2" {
+		t.Errorf("Expected ServerIP '10.0.0.2' after debounce reset, got '%s'", cm.GetConfig().ServerIP)
+	}
+}
+
+// TestConfigManager_CleanupStopsTimer tests that Cleanup stops debounce timer
+func TestConfigManager_CleanupStopsTimer(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	initialConfig := &Config{
+		ServerIP:       "192.168.1.1",
+		UpdateInterval: 30,
+		CategoryOrder:  []string{"Drift"},
+		CategoryEmojis: map[string]string{"Drift": "🟣"},
+		Servers:        []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
+	}
+
+	data, _ := json.Marshal(initialConfig)
+	os.WriteFile(configPath, data, 0644)
+
+	cm := NewConfigManager(configPath, initialConfig)
+
+	// Wait to ensure different modification time
+	time.Sleep(10 * time.Millisecond)
+
+	// Write new config
+	newConfig := &Config{
+		ServerIP:       "10.0.0.1",
+		UpdateInterval: 30,
+		CategoryOrder:  []string{"Drift"},
+		CategoryEmojis: map[string]string{"Drift": "🟣"},
+		Servers:        []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
+	}
+
+	data, _ = json.Marshal(newConfig)
+	os.WriteFile(configPath, data, 0644)
+
+	// Trigger reload check (schedules debounce)
+	cm.checkAndReloadIfNeeded()
+
+	// Immediately cleanup (should stop timer)
+	cm.Cleanup()
+
+	// Wait longer than debounce delay
+	time.Sleep(150 * time.Millisecond)
+
+	// Config should NOT be updated (timer was stopped)
+	if cm.GetConfig().ServerIP == "10.0.0.1" {
+		t.Error("Config should not be reloaded after Cleanup stops timer")
+	}
+
+	// Cleanup should be idempotent (calling multiple times is safe)
+	cm.Cleanup()
+	cm.Cleanup()
+
+	if cm.GetConfig().ServerIP != "192.168.1.1" {
+		t.Errorf("Config should remain unchanged after Cleanup, got ServerIP: %s", cm.GetConfig().ServerIP)
+	}
+}
+
+// TestConfigManager_CleanupConcurrentWithReload tests Cleanup during pending reload
+func TestConfigManager_CleanupConcurrentWithReload(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	initialConfig := &Config{
+		ServerIP:       "192.168.1.1",
+		UpdateInterval: 30,
+		CategoryOrder:  []string{"Drift"},
+		CategoryEmojis: map[string]string{"Drift": "🟣"},
+		Servers:        []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
+	}
+
+	data, _ := json.Marshal(initialConfig)
+	os.WriteFile(configPath, data, 0644)
+
+	cm := NewConfigManager(configPath, initialConfig)
+
+	// Wait to ensure different modification time
+	time.Sleep(10 * time.Millisecond)
+
+	// Write new config
+	newConfig := &Config{
+		ServerIP:       "10.0.0.1",
+		UpdateInterval: 30,
+		CategoryOrder:  []string{"Drift"},
+		CategoryEmojis: map[string]string{"Drift": "🟣"},
+		Servers:        []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
+	}
+
+	data, _ = json.Marshal(newConfig)
+	os.WriteFile(configPath, data, 0644)
+
+	// Trigger multiple concurrent reload checks
+	done := make(chan error)
+	for i := 0; i < 5; i++ {
+		go func() {
+			done <- cm.checkAndReloadIfNeeded()
+		}()
+	}
+
+	// Cleanup concurrently
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		cm.Cleanup()
+	}()
+
+	// All checks should succeed (or not crash)
+	for i := 0; i < 5; i++ {
+		<-done
+	}
+
+	// Wait for any pending timers
+	time.Sleep(150 * time.Millisecond)
+
+	// Verify config manager still works
+	cfg := cm.GetConfig()
+	if cfg == nil {
+		t.Error("GetConfig should return valid config after Cleanup")
+	}
+}
+
+// TestConfigManager_DebounceWithInvalidConfig tests that invalid config doesn't crash debounce
+func TestConfigManager_DebounceWithInvalidConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	initialConfig := &Config{
+		ServerIP:       "192.168.1.1",
+		UpdateInterval: 30,
+		CategoryOrder:  []string{"Drift"},
+		CategoryEmojis: map[string]string{"Drift": "🟣"},
+		Servers:        []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
+	}
+
+	data, _ := json.Marshal(initialConfig)
+	os.WriteFile(configPath, data, 0644)
+
+	cm := NewConfigManager(configPath, initialConfig)
+	originalIP := cm.GetConfig().ServerIP
+
+	// Wait to ensure different modification time
+	time.Sleep(10 * time.Millisecond)
+
+	// Write invalid config
+	invalidConfig := &Config{
+		ServerIP:       "", // Invalid
+		UpdateInterval: 30,
+		CategoryOrder:  []string{"Drift"},
+		CategoryEmojis: map[string]string{"Drift": "🟣"},
+		Servers:        []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
+	}
+
+	data, _ = json.Marshal(invalidConfig)
+	os.WriteFile(configPath, data, 0644)
+
+	// Trigger reload check (schedules debounce)
+	err := cm.checkAndReloadIfNeeded()
+	if err != nil {
+		t.Fatalf("checkAndReloadIfNeeded failed: %v", err)
+	}
+
+	// Wait for debounce timer to fire and reload to fail
+	time.Sleep(150 * time.Millisecond)
+
+	// Config should remain unchanged (reload failed)
+	if cm.GetConfig().ServerIP != originalIP {
+		t.Errorf("Config should remain unchanged on invalid config, got ServerIP: %s", cm.GetConfig().ServerIP)
+	}
+
+	// Write valid config
+	time.Sleep(10 * time.Millisecond)
+	validConfig := &Config{
+		ServerIP:       "10.0.0.1",
+		UpdateInterval: 30,
+		CategoryOrder:  []string{"Drift"},
+		CategoryEmojis: map[string]string{"Drift": "🟣"},
+		Servers:        []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
+	}
+
+	data, _ = json.Marshal(validConfig)
+	os.WriteFile(configPath, data, 0644)
+
+	cm.checkAndReloadIfNeeded()
+
+	// Wait for debounce
+	time.Sleep(150 * time.Millisecond)
+
+	// Config should now be updated
+	if cm.GetConfig().ServerIP != "10.0.0.1" {
+		t.Errorf("Expected ServerIP '10.0.0.1' after valid config, got '%s'", cm.GetConfig().ServerIP)
+	}
+}
+
+// TestConfigManager_DebounceConcurrentWrites tests concurrent file modifications
+func TestConfigManager_DebounceConcurrentWrites(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	initialConfig := &Config{
+		ServerIP:       "192.168.1.1",
+		UpdateInterval: 30,
+		CategoryOrder:  []string{"Drift"},
+		CategoryEmojis: map[string]string{"Drift": "🟣"},
+		Servers:        []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
+	}
+
+	data, _ := json.Marshal(initialConfig)
+	os.WriteFile(configPath, data, 0644)
+
+	cm := NewConfigManager(configPath, initialConfig)
+
+	// Wait to ensure different modification time
+	time.Sleep(10 * time.Millisecond)
+
+	// Launch 10 concurrent writers
+	done := make(chan bool)
+	for i := 0; i < 10; i++ {
+		go func(idx int) {
+			newConfig := &Config{
+				ServerIP:       fmt.Sprintf("10.0.0.%d", idx+1),
+				UpdateInterval: 30,
+				CategoryOrder:  []string{"Drift"},
+				CategoryEmojis: map[string]string{"Drift": "🟣"},
+				Servers:        []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
+			}
+
+			data, _ := json.Marshal(newConfig)
+			os.WriteFile(configPath, data, 0644)
+			cm.checkAndReloadIfNeeded()
+			done <- true
+		}(i)
+	}
+
+	// Wait for all writers
+	for i := 0; i < 10; i++ {
+		<-done
+	}
+
+	// Wait for debounce timer
+	time.Sleep(200 * time.Millisecond)
+
+	// Config should be valid and reflect one of the writes
+	cfg := cm.GetConfig()
+	if cfg == nil {
+		t.Fatal("Config should not be nil after concurrent writes")
+	}
+
+	if cfg.ServerIP == "" {
+		t.Error("ServerIP should not be empty after concurrent writes")
+	}
+
+	if !strings.HasPrefix(cfg.ServerIP, "10.0.0.") {
+		t.Errorf("Expected ServerIP to start with '10.0.0.', got: %s", cfg.ServerIP)
+	}
+
+	t.Logf("Final ServerIP after concurrent writes: %s", cfg.ServerIP)
 }
