@@ -33,7 +33,7 @@ podman exec ac-discordbot whoami
 
 ### Configuration via Volume Mount
 
-The bot loads `config.json` from its working directory (`/root/`) at startup.
+The bot loads `config.json` from the data directory (`/data/`) at startup.
 Host can edit server configuration via volume mount without container rebuild.
 
 **Option 1: Mount single config file (recommended - simpler)**
@@ -52,7 +52,7 @@ podman run -d \
   --name ac-discordbot \
   -e DISCORD_TOKEN="your_bot_token_here" \
   -e CHANNEL_ID="your_channel_id" \
-  -v /path/to/config/config.json:/root/config.json:ro \
+  -v /path/to/config/config.json:/data/config.json:ro \
   --restart unless-stopped \
   ac-discordbot
 ```
@@ -70,7 +70,8 @@ podman run -d \
   --name ac-discordbot \
   -e DISCORD_TOKEN="your_bot_token_here" \
   -e CHANNEL_ID="your_channel_id" \
-  -v /path/to/config:/root:ro \
+  -v /path/to/config:/data:ro \
+  -v /path/to/config/config.json:/data/config.json:ro \
   --restart unless-stopped \
   ac-discordbot
 ```
@@ -93,7 +94,7 @@ services:
       - DISCORD_TOKEN=${DISCORD_TOKEN}
       - CHANNEL_ID=${CHANNEL_ID}
     volumes:
-      - ./config.json:/root/config.json:ro
+      - ./config.json:/data/config.json:ro
     restart: unless-stopped
 ```
 
@@ -142,6 +143,6 @@ podman logs ac-discordbot | grep "Loading config"
 ```
 
 Common issues:
-- Volume mount path must match: `/root/config.json` (file) or `/root/` (directory)
+- Volume mount path must match: `/data/config.json` (file) or `/data/` (directory)
 - Host path must be absolute (not relative to current directory)
 - Config file name must be exactly `config.json` (case-sensitive)
