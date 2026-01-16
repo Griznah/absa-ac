@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log"
 	"net/http"
@@ -123,27 +124,51 @@ type Config struct {
 	Servers         []Server          `json:"servers"`
 }
 
-// loadConfig reads and parses config.json from the working directory
-func loadConfig() (*Config, error) {
+// loadConfig reads and parses config.json with fallback logic
+func loadConfig(providedPath string) (*Config, error) {
+	// Build list of paths to try, in priority order
+	pathsToTry := []string{}
 	wd, err := os.Getwd()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get working directory: %w", err)
 	}
 
-	configPath := filepath.Join(wd, "config.json")
-	log.Printf("Loading config from: %s", configPath)
-
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read config.json: %w (working directory: %s)", err, wd)
+	// Priority 1: Explicitly provided path
+	if providedPath != "" {
+		pathsToTry = append(pathsToTry, providedPath)
 	}
 
-	var cfg Config
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("failed to parse config.json: %w", err)
+	// Priority 2: Container path (if not explicitly provided)
+	if providedPath != "/data/config.json" {
+		pathsToTry = append(pathsToTry, "/data/config.json")
 	}
 
-	return &cfg, nil
+	// Priority 3: Local development path (if not explicitly provided)
+	if providedPath != "./config.json" && providedPath != "config.json" {
+		pathsToTry = append(pathsToTry, filepath.Join(wd, "config.json"))
+	}
+
+	// Try each path, collecting errors for comprehensive reporting
+	var errors []string
+	for _, path := range pathsToTry {
+		log.Printf("Attempting to load config from: %s", path)
+
+		data, err := os.ReadFile(path)
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("  %s: %v", path, err))
+			continue
+		}
+
+		var cfg Config
+		if err := json.Unmarshal(data, &cfg); err != nil {
+			return nil, fmt.Errorf("failed to parse config from %s: %w", path, err)
+		}
+
+		log.Printf("Successfully loaded config from: %s", path)
+		return &cfg, nil
+	}
+
+	return nil, fmt.Errorf("failed to load config from any location:\n%s", strings.Join(errors, "\n"))
 }
 
 // validateConfigStruct performs fail-fast validation on loaded config
@@ -559,6 +584,11 @@ func validateConfig() (token, channelID string, err error) {
 func main() {
 	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
 
+	// Parse command-line flags for config path
+	configPath := flag.String("c", "", "Path to config.json file")
+	flag.StringVar(configPath, "config", "", "Path to config.json file")
+	flag.Parse()
+
 	// Load environment variables from .env file (optional)
 	if err := loadEnv(); err != nil {
 		log.Printf("Warning: %v", err)
@@ -573,7 +603,7 @@ func main() {
 	channelID = channelID
 
 	// Load and validate config.json
-	cfg, err := loadConfig()
+	cfg, err := loadConfig(*configPath)
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}
