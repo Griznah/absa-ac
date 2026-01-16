@@ -1,23 +1,12 @@
 {
-  "_comment": "AC Discord Bot Configuration Example",
-  "_note": "Copy this file to config.json and edit with your server details",
-
   "server_ip": "your.server.ip",
-  "_server_ip_note": "Base IP address or hostname for Assetto Corsa servers. This is automatically prepended to each server's address for HTTP queries.",
-
   "update_interval": 30,
-  "_update_interval_note": "How often to update Discord status messages (in seconds). Minimum: 1, Recommended: 30",
-
   "category_order": ["Drift", "Touge", "Track"],
-  "_category_order_note": "Display order for categories in Discord embed. Must be non-empty.",
-
   "category_emojis": {
     "Drift": "🏎️",
     "Touge": "⛰️",
     "Track": "🛤️"
   },
-  "_category_emojis_note": "Emoji for each category. Must contain all categories from category_order.",
-
   "servers": [
     {
       "name": "Drift Server 1",
@@ -39,6 +28,5 @@
       "port": 8094,
       "category": "Track"
     }
-  ],
-  "_servers_note": "Array of servers to monitor. Each server needs name (display name), port (HTTP query port, 1-65535), and category (must exist in category_order). The server_ip is automatically prepended."
+  ]
 }

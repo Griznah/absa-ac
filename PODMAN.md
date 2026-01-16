@@ -15,7 +15,7 @@ podman build -t ac-discordbot .
 This container runs as a non-root user (UID 1001) following container security best practices.
 
 ### User Details
-- **Username**: botuser
+- **Username**: absabot
 - **UID/GID**: 1001/1001
 - **Shell**: /sbin/nologin (no login access)
 - **Permissions**: Read-only access to application code
@@ -26,7 +26,7 @@ The bot requires no file write permissions as it only reads environment variable
 
 ```bash
 podman exec ac-discordbot whoami
-# Should output: botuser
+# Should output: absabot
 ```
 
 ## Run
@@ -62,6 +62,7 @@ podman run -d \
 # Create directory with config file inside
 mkdir -p /path/to/config
 cp config.json.example /path/to/config/config.json
+nano /path/to/config/config.json
 sudo chown -R 1001:1001 /path/to/config
 sudo chmod 755 /path/to/config
 
@@ -71,7 +72,6 @@ podman run -d \
   -e DISCORD_TOKEN="your_bot_token_here" \
   -e CHANNEL_ID="your_channel_id" \
   -v /path/to/config:/data:ro \
-  -v /path/to/config/config.json:/data/config.json:ro \
   --restart unless-stopped \
   ac-discordbot
 ```
@@ -126,7 +126,7 @@ If the bot cannot read config.json:
 ```bash
 # Check container user ID
 podman exec ac-discordbot id
-# Output: uid=1001(botuser) gid=1001(botuser)
+# Output: uid=1001(absabot) gid=1001(absabot)
 
 # Fix host file permissions (for single file mount)
 sudo chown 1001:1001 /path/to/config/config.json
