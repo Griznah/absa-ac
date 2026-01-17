@@ -21,18 +21,18 @@ WORKDIR /app
 # Copy binary from builder
 COPY --from=builder /app/bot .
 
-# Create non-root user and group
-RUN addgroup -g 1001 absabot && \
-    adduser -D -u 1001 -G absabot absabot && \
-    mkdir -p /data && \
-    chown -R absabot:absabot /app /data
-
 # Volume mount for config.json - host can edit configuration without container rebuild
 # Mount options:
 # 1) Single file: podman run -v /path/to/config.json:/data/config.json:ro ...
 # 2) Directory: podman run -v /path/to/config:/data:ro ... (contains config.json)
 # NOTE: VOLUME must be declared AFTER chown, else ownership changes are discarded
 VOLUME /data
+
+# Create non-root user and group
+RUN addgroup -g 1001 absabot && \
+    adduser -D -u 1001 -G absabot absabot && \
+    chown -R absabot:absabot /app /data
+
 
 # Switch to non-root user
 USER 1001

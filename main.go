@@ -213,6 +213,10 @@ func (cm *ConfigManager) performReload() error {
 		return fmt.Errorf("config validation failed: %w", err)
 	}
 
+	// Initialize server IPs from global ServerIP setting.
+	// Must complete before atomic swap; readers see config via atomic.Value without locks.
+	initializeServerIPs(newCfg)
+
 	// Success: atomically swap config and update mod time
 	cm.config.Store(newCfg)
 	cm.lastModTime = currentModTime
@@ -453,6 +457,15 @@ func validateConfigStruct(cfg *Config) {
 	}
 
 	log.Printf("Configuration validated: %d servers across %d categories", len(cfg.Servers), len(cfg.CategoryOrder))
+}
+
+// initializeServerIPs sets the IP field for each server to the global ServerIP value.
+// This is called after config load to populate server IPs from the centralized ServerIP setting,
+// avoiding redundancy in the config file while maintaining per-server IP fields for URL construction.
+func initializeServerIPs(cfg *Config) {
+	for i := range cfg.Servers {
+		cfg.Servers[i].IP = cfg.ServerIP
+	}
 }
 
 // ================= HTTP CLIENT =================
@@ -861,10 +874,8 @@ func main() {
 	}
 	validateConfigStruct(cfg)
 
-	// Set server IPs from config
-	for i := range cfg.Servers {
-		cfg.Servers[i].IP = cfg.ServerIP
-	}
+	// Initialize server IPs before ConfigManager creation (required for lock-free readers via atomic.Value)
+	initializeServerIPs(cfg)
 
 	// Create config manager with initial config
 	configManager := NewConfigManager(getConfigPath(*configPath), cfg)
