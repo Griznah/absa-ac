@@ -10,6 +10,87 @@ import (
 	"time"
 )
 
+// TestInitializeServerIPs_Normal tests that all servers get their IP set correctly
+func TestInitializeServerIPs_Normal(t *testing.T) {
+	cfg := &Config{
+		ServerIP:       "192.168.1.100",
+		UpdateInterval: 30,
+		CategoryOrder:  []string{"Drift", "Track"},
+		CategoryEmojis: map[string]string{"Drift": "🟣", "Track": "🔵"},
+		Servers: []Server{
+			{Name: "Server1", Port: 8081, Category: "Drift", IP: ""},
+			{Name: "Server2", Port: 8082, Category: "Track", IP: ""},
+			{Name: "Server3", Port: 8083, Category: "Drift", IP: ""},
+		},
+	}
+
+	initializeServerIPs(cfg)
+
+	if cfg.Servers[0].IP != "192.168.1.100" {
+		t.Errorf("Expected Server1 IP '192.168.1.100', got '%s'", cfg.Servers[0].IP)
+	}
+
+	if cfg.Servers[1].IP != "192.168.1.100" {
+		t.Errorf("Expected Server2 IP '192.168.1.100', got '%s'", cfg.Servers[1].IP)
+	}
+
+	if cfg.Servers[2].IP != "192.168.1.100" {
+		t.Errorf("Expected Server3 IP '192.168.1.100', got '%s'", cfg.Servers[2].IP)
+	}
+}
+
+// TestInitializeServerIPs_ZeroServers tests that empty server slice doesn't panic
+func TestInitializeServerIPs_ZeroServers(t *testing.T) {
+	cfg := &Config{
+		ServerIP:       "192.168.1.100",
+		UpdateInterval: 30,
+		CategoryOrder:  []string{"Drift"},
+		CategoryEmojis: map[string]string{"Drift": "🟣"},
+		Servers:        []Server{},
+	}
+
+	initializeServerIPs(cfg)
+
+	if len(cfg.Servers) != 0 {
+		t.Errorf("Expected 0 servers, got %d", len(cfg.Servers))
+	}
+}
+
+// TestInitializeServerIPs_Idempotent tests that function is idempotent when IP already set
+func TestInitializeServerIPs_Idempotent(t *testing.T) {
+	cfg := &Config{
+		ServerIP:       "192.168.1.100",
+		UpdateInterval: 30,
+		CategoryOrder:  []string{"Drift"},
+		CategoryEmojis: map[string]string{"Drift": "🟣"},
+		Servers: []Server{
+			{Name: "Server1", Port: 8081, Category: "Drift", IP: "192.168.1.100"},
+			{Name: "Server2", Port: 8082, Category: "Drift", IP: "192.168.1.100"},
+		},
+	}
+
+	initializeServerIPs(cfg)
+
+	if cfg.Servers[0].IP != "192.168.1.100" {
+		t.Errorf("Expected Server1 IP '192.168.1.100' after idempotent call, got '%s'", cfg.Servers[0].IP)
+	}
+
+	if cfg.Servers[1].IP != "192.168.1.100" {
+		t.Errorf("Expected Server2 IP '192.168.1.100' after idempotent call, got '%s'", cfg.Servers[1].IP)
+	}
+
+	// Call again to verify idempotence
+	initializeServerIPs(cfg)
+
+	if cfg.Servers[0].IP != "192.168.1.100" {
+		t.Errorf("Expected Server1 IP '192.168.1.100' after second call, got '%s'", cfg.Servers[0].IP)
+	}
+
+	if cfg.Servers[1].IP != "192.168.1.100" {
+		t.Errorf("Expected Server2 IP '192.168.1.100' after second call, got '%s'", cfg.Servers[1].IP)
+	}
+}
+
 // TestLoadEnv_NoFile tests that loadEnv handles missing .env gracefully
 func TestLoadEnv_NoFile(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -1798,4 +1879,315 @@ func TestConfigManager_DebounceConcurrentWrites(t *testing.T) {
 	}
 
 	t.Logf("Final ServerIP after concurrent writes: %s", cfg.ServerIP)
+}
+
+// TestConfigReload_IPsInitialized tests that config reload correctly initializes server IPs
+func TestConfigReload_IPsInitialized(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	initialConfig := &Config{
+		ServerIP:       "192.168.1.1",
+		UpdateInterval: 30,
+		CategoryOrder:  []string{"Drift", "Track"},
+		CategoryEmojis: map[string]string{"Drift": "🟣", "Track": "🔵"},
+		Servers: []Server{
+			{Name: "Drift Server 1", Port: 8081, Category: "Drift"},
+			{Name: "Drift Server 2", Port: 8082, Category: "Drift"},
+			{Name: "Track Server", Port: 8083, Category: "Track"},
+		},
+	}
+
+	// Initialize IPs for initial config (simulating main.go behavior)
+	initializeServerIPs(initialConfig)
+
+	data, _ := json.Marshal(initialConfig)
+	os.WriteFile(configPath, data, 0644)
+
+	cm := NewConfigManager(configPath, initialConfig)
+
+	// Verify initial IPs are set
+	cfg := cm.GetConfig()
+	for i, server := range cfg.Servers {
+		if server.IP != "192.168.1.1" {
+			t.Errorf("Initial config: server %d expected IP '192.168.1.1', got '%s'", i, server.IP)
+		}
+	}
+
+	// Wait to ensure different modification time
+	time.Sleep(10 * time.Millisecond)
+
+	// Write new config with different ServerIP
+	newConfig := &Config{
+		ServerIP:       "10.0.0.1",
+		UpdateInterval: 30,
+		CategoryOrder:  []string{"Drift", "Track"},
+		CategoryEmojis: map[string]string{"Drift": "🟣", "Track": "🔵"},
+		Servers: []Server{
+			{Name: "Drift Server 1", Port: 8081, Category: "Drift"},
+			{Name: "Drift Server 2", Port: 8082, Category: "Drift"},
+			{Name: "Track Server", Port: 8083, Category: "Track"},
+		},
+	}
+
+	data, _ = json.Marshal(newConfig)
+	os.WriteFile(configPath, data, 0644)
+
+	// Trigger reload
+	err := cm.checkAndReloadIfNeeded()
+	if err != nil {
+		t.Fatalf("checkAndReloadIfNeeded failed: %v", err)
+	}
+
+	// Wait for debounce
+	time.Sleep(150 * time.Millisecond)
+
+	// Verify all servers have updated IPs
+	cfg = cm.GetConfig()
+	if cfg.ServerIP != "10.0.0.1" {
+		t.Errorf("Expected ServerIP '10.0.0.1' after reload, got '%s'", cfg.ServerIP)
+	}
+
+	for i, server := range cfg.Servers {
+		if server.IP != "10.0.0.1" {
+			t.Errorf("After reload: server %d expected IP '10.0.0.1', got '%s'", i, server.IP)
+		}
+	}
+}
+
+// TestConfigReload_SameServerIP tests that reload with same ServerIP is idempotent
+func TestConfigReload_SameServerIP(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	initialConfig := &Config{
+		ServerIP:       "192.168.1.1",
+		UpdateInterval: 30,
+		CategoryOrder:  []string{"Drift"},
+		CategoryEmojis: map[string]string{"Drift": "🟣"},
+		Servers: []Server{
+			{Name: "Server 1", Port: 8081, Category: "Drift"},
+			{Name: "Server 2", Port: 8082, Category: "Drift"},
+		},
+	}
+
+	// Initialize IPs for initial config (simulating main.go behavior)
+	initializeServerIPs(initialConfig)
+
+	data, _ := json.Marshal(initialConfig)
+	os.WriteFile(configPath, data, 0644)
+
+	cm := NewConfigManager(configPath, initialConfig)
+
+	// Wait to ensure different modification time
+	time.Sleep(10 * time.Millisecond)
+
+	// Write config with same ServerIP but different UpdateInterval
+	newConfig := &Config{
+		ServerIP:       "192.168.1.1", // Same IP
+		UpdateInterval: 60,             // Different interval
+		CategoryOrder:  []string{"Drift"},
+		CategoryEmojis: map[string]string{"Drift": "🟣"},
+		Servers: []Server{
+			{Name: "Server 1", Port: 8081, Category: "Drift"},
+			{Name: "Server 2", Port: 8082, Category: "Drift"},
+		},
+	}
+
+	data, _ = json.Marshal(newConfig)
+	os.WriteFile(configPath, data, 0644)
+
+	// Trigger reload
+	err := cm.checkAndReloadIfNeeded()
+	if err != nil {
+		t.Fatalf("checkAndReloadIfNeeded failed: %v", err)
+	}
+
+	// Wait for debounce
+	time.Sleep(150 * time.Millisecond)
+
+	// Verify IPs are still correctly set
+	cfg := cm.GetConfig()
+	if cfg.ServerIP != "192.168.1.1" {
+		t.Errorf("Expected ServerIP '192.168.1.1' after reload, got '%s'", cfg.ServerIP)
+	}
+
+	for i, server := range cfg.Servers {
+		if server.IP != "192.168.1.1" {
+			t.Errorf("After idempotent reload: server %d expected IP '192.168.1.1', got '%s'", i, server.IP)
+		}
+	}
+
+	// Verify UpdateInterval was updated
+	if cfg.UpdateInterval != 60 {
+		t.Errorf("Expected UpdateInterval 60 after reload, got %d", cfg.UpdateInterval)
+	}
+}
+
+// TestConfigReload_InvalidConfigPreservesIPs tests that failed reload preserves original IPs
+func TestConfigReload_InvalidConfigPreservesIPs(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	initialConfig := &Config{
+		ServerIP:       "192.168.1.1",
+		UpdateInterval: 30,
+		CategoryOrder:  []string{"Drift"},
+		CategoryEmojis: map[string]string{"Drift": "🟣"},
+		Servers: []Server{
+			{Name: "Server 1", Port: 8081, Category: "Drift"},
+			{Name: "Server 2", Port: 8082, Category: "Drift"},
+		},
+	}
+
+	data, _ := json.Marshal(initialConfig)
+	os.WriteFile(configPath, data, 0644)
+
+	cm := NewConfigManager(configPath, initialConfig)
+
+	// Store original IPs for verification
+	originalIPs := make([]string, len(initialConfig.Servers))
+	for i, server := range initialConfig.Servers {
+		originalIPs[i] = server.IP
+	}
+
+	// Wait to ensure different modification time
+	time.Sleep(10 * time.Millisecond)
+
+	// Write invalid config (empty ServerIP)
+	invalidConfig := &Config{
+		ServerIP:       "", // Invalid
+		UpdateInterval: 30,
+		CategoryOrder:  []string{"Drift"},
+		CategoryEmojis: map[string]string{"Drift": "🟣"},
+		Servers:        []Server{{Name: "Server 1", Port: 8081, Category: "Drift"}},
+	}
+
+	data, _ = json.Marshal(invalidConfig)
+	os.WriteFile(configPath, data, 0644)
+
+	// Trigger reload (schedules debounce)
+	err := cm.checkAndReloadIfNeeded()
+	if err != nil {
+		t.Fatalf("checkAndReloadIfNeeded failed: %v", err)
+	}
+
+	// Wait for debounce and reload attempt
+	time.Sleep(150 * time.Millisecond)
+
+	// Config should remain unchanged with original IPs intact
+	cfg := cm.GetConfig()
+	if cfg == nil {
+		t.Fatal("Config should not be nil after failed reload")
+	}
+
+	if cfg.ServerIP != "192.168.1.1" {
+		t.Errorf("Config should preserve original ServerIP after failed reload, got '%s'", cfg.ServerIP)
+	}
+
+	for i, server := range cfg.Servers {
+		if server.IP != originalIPs[i] {
+			t.Errorf("Server %d IP should be preserved after failed reload: expected '%s', got '%s'", i, originalIPs[i], server.IP)
+		}
+	}
+}
+
+// TestConfigReload_ConcurrentAccessWithIPs tests that concurrent reads during reload see consistent IPs
+func TestConfigReload_ConcurrentAccessWithIPs(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	initialConfig := &Config{
+		ServerIP:       "192.168.1.1",
+		UpdateInterval: 30,
+		CategoryOrder:  []string{"Drift"},
+		CategoryEmojis: map[string]string{"Drift": "🟣"},
+		Servers: []Server{
+			{Name: "Server 1", Port: 8081, Category: "Drift"},
+			{Name: "Server 2", Port: 8082, Category: "Drift"},
+		},
+	}
+
+	// Initialize IPs for initial config (simulating main.go behavior)
+	initializeServerIPs(initialConfig)
+
+	data, _ := json.Marshal(initialConfig)
+	os.WriteFile(configPath, data, 0644)
+
+	cm := NewConfigManager(configPath, initialConfig)
+
+	// Wait to ensure different modification time
+	time.Sleep(10 * time.Millisecond)
+
+	// Start concurrent readers
+	readerDone := make(chan bool)
+	for i := 0; i < 50; i++ {
+		go func() {
+			for j := 0; j < 20; j++ {
+				cfg := cm.GetConfig()
+				if cfg == nil {
+					t.Error("GetConfig returned nil during concurrent access")
+					continue
+				}
+
+				// Verify all servers have consistent IPs
+				expectedIP := cfg.ServerIP
+				for k, server := range cfg.Servers {
+					if server.IP != expectedIP {
+						t.Errorf("Inconsistent IPs detected: ServerIP='%s', Server[%d].IP='%s'", expectedIP, k, server.IP)
+					}
+				}
+				time.Sleep(time.Millisecond)
+			}
+			readerDone <- true
+		}()
+	}
+
+	// Trigger multiple reloads during concurrent reads
+	reloadDone := make(chan bool)
+	go func() {
+		for i := 0; i < 5; i++ {
+			time.Sleep(20 * time.Millisecond)
+
+			newConfig := &Config{
+				ServerIP:       fmt.Sprintf("10.0.0.%d", i+1),
+				UpdateInterval: 30,
+				CategoryOrder:  []string{"Drift"},
+				CategoryEmojis: map[string]string{"Drift": "🟣"},
+				Servers: []Server{
+					{Name: "Server 1", Port: 8081, Category: "Drift"},
+					{Name: "Server 2", Port: 8082, Category: "Drift"},
+				},
+			}
+
+			data, _ := json.Marshal(newConfig)
+			os.WriteFile(configPath, data, 0644)
+			cm.checkAndReloadIfNeeded()
+		}
+		reloadDone <- true
+	}()
+
+	// Wait for all readers and reloader
+	for i := 0; i < 50; i++ {
+		<-readerDone
+	}
+	<-reloadDone
+
+	// Wait for final debounce
+	time.Sleep(150 * time.Millisecond)
+
+	// Verify final config has consistent IPs
+	cfg := cm.GetConfig()
+	if cfg == nil {
+		t.Fatal("Final config should not be nil")
+	}
+
+	expectedIP := cfg.ServerIP
+	for i, server := range cfg.Servers {
+		if server.IP != expectedIP {
+			t.Errorf("Final config: ServerIP='%s', Server[%d].IP='%s' - should be consistent", expectedIP, i, server.IP)
+		}
+	}
+
+	t.Logf("Final consistent state: ServerIP=%s, all server IPs match", cfg.ServerIP)
 }
