@@ -25,7 +25,7 @@ COPY --from=builder /app/bot .
 # Mount options:
 # 1) Single file: podman run -v /path/to/config.json:/data/config.json:ro ...
 # 2) Directory: podman run -v /path/to/config:/data:ro ... (contains config.json)
-# NOTE: VOLUME must be declared AFTER chown, else ownership changes are discarded
+# NOTE: VOLUME must be declared BEFORE chown, else ownership changes are discarded
 VOLUME /data
 
 # Create non-root user and group
