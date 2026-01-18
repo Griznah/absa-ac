@@ -230,7 +230,7 @@ curl -X POST \
 ### API Features
 
 - **Atomic writes**: Config updates use temp-file-then-rename pattern to prevent corruption
-- **Backup rotation**: Every write creates 3 backup versions (`config.json.backup`, `.backup.1`, `.backup.2`) for rollback
+- **Backup rotation**: Every write creates 4 backup files (`config.json.backup`, `.backup.1`, `.backup.2`, `.backup.3`) for rollback
 - **Automatic reload**: Changes trigger the existing 30-second polling cycle to reload config
 - **Bearer token auth**: RFC 6750 compliant authentication
 - **Rate limiting**: 10 req/sec per IP with 20 request burst
