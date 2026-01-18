@@ -2,7 +2,6 @@ package api
 
 import (
 	"encoding/json"
-	"io"
 	"log"
 	"net/http"
 )
@@ -86,7 +85,7 @@ func (s *Server) PatchConfig(w http.ResponseWriter, r *http.Request) {
 
 	var partial map[string]interface{}
 	if err := json.NewDecoder(r.Body).Decode(&partial); err != nil {
-		if err == io.ErrUnexpectedEOF || err.Error() == "http: request body too large" {
+		if err.Error() == "http: request body too large" {
 			WriteError(w, http.StatusRequestEntityTooLarge, "Request body too large",
 				"Maximum size is 1MB")
 			return
@@ -125,7 +124,7 @@ func (s *Server) PutConfig(w http.ResponseWriter, r *http.Request) {
 
 	var newConfig map[string]interface{}
 	if err := json.NewDecoder(r.Body).Decode(&newConfig); err != nil {
-		if err == io.ErrUnexpectedEOF || err.Error() == "http: request body too large" {
+		if err.Error() == "http: request body too large" {
 			WriteError(w, http.StatusRequestEntityTooLarge, "Request body too large",
 				"Maximum size is 1MB")
 			return
@@ -164,7 +163,7 @@ func (s *Server) ValidateConfig(w http.ResponseWriter, r *http.Request) {
 
 	var config map[string]interface{}
 	if err := json.NewDecoder(r.Body).Decode(&config); err != nil {
-		if err == io.ErrUnexpectedEOF || err.Error() == "http: request body too large" {
+		if err.Error() == "http: request body too large" {
 			WriteError(w, http.StatusRequestEntityTooLarge, "Request body too large",
 				"Maximum size is 1MB")
 			return

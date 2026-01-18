@@ -4,6 +4,7 @@ import (
 	"crypto/subtle"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -73,8 +74,13 @@ func RateLimit(requestsPerSecond int, burstSize int) func(http.Handler) http.Han
 				return
 			}
 
-			// Extract client IP
+			// Extract client IP (strip port to make limiter per-IP not per-connection)
 			clientIP := r.RemoteAddr
+			// Parse host:port format to extract just the IP address
+			if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+				clientIP = host
+			}
+
 			if forwardedFor := r.Header.Get("X-Forwarded-For"); forwardedFor != "" {
 				// Trust rightmost IP (last proxy) not leftmost (can be spoofed)
 				// X-Forwarded-For format: "client-ip, proxy1-ip, proxy2-ip"
