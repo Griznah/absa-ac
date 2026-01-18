@@ -3,8 +3,10 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -123,7 +125,11 @@ func TestRateLimitMemoryBomb(t *testing.T) {
 	// Simulate 10,000 unique IP addresses
 	uniqueIPs := make([]string, 10000)
 	for i := 0; i < 10000; i++ {
-		uniqueIPs[i] = strings.Join([]string{"192", "168", "0", toString(i)}, ".")
+		// Generate valid IP addresses by distributing across the fourth octet
+		// and using the third octet for overflow (i / 256 gives 0-39 range)
+		thirdOctet := i / 256
+		fourthOctet := i % 256
+		uniqueIPs[i] = fmt.Sprintf("192.168.%d.%d", thirdOctet, fourthOctet)
 	}
 
 	var wg sync.WaitGroup
@@ -152,7 +158,7 @@ func TestRateLimitMemoryBomb(t *testing.T) {
 }
 
 func toString(i int) string {
-	return string(rune('0' + i))
+	return strconv.Itoa(i)
 }
 
 // TestCORSWildcardBypass tests CORS allowlist validation

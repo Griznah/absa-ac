@@ -539,6 +539,7 @@ func mergeMaps(dest, src map[string]interface{}) map[string]interface{} {
 
 // mergeServerArrays merges server arrays by name instead of replacing
 // Servers from partial update existing servers by name, new servers are appended
+// Preserves all dest servers unless explicitly updated/removed in src
 func mergeServerArrays(dest, src interface{}) interface{} {
 	destArray, destOk := dest.([]interface{})
 	srcArray, srcOk := src.([]interface{})
@@ -548,8 +549,9 @@ func mergeServerArrays(dest, src interface{}) interface{} {
 		return src
 	}
 
-	// Build map of existing servers by name
+	// Build map of existing servers by name and track updated names
 	destServers := make(map[string]map[string]interface{})
+	updatedNames := make(map[string]bool)
 	for _, s := range destArray {
 		if serverMap, ok := s.(map[string]interface{}); ok {
 			if name, hasName := serverMap["name"].(string); hasName {
@@ -558,27 +560,53 @@ func mergeServerArrays(dest, src interface{}) interface{} {
 		}
 	}
 
-	// Merge: update existing servers by name, append new ones
-	var result []interface{}
+	// Start with all dest servers (preserves servers not mentioned in src)
+	result := make([]interface{}, 0, len(destArray))
+	for _, s := range destArray {
+		serverMap, ok := s.(map[string]interface{})
+		if !ok {
+			result = append(result, s)
+			continue
+		}
+		if _, hasName := serverMap["name"].(string); hasName {
+			result = append(result, s)
+		} else {
+			result = append(result, s)
+		}
+	}
+
+	// Merge src servers: update existing, append new, preserve order from src
 	for _, s := range srcArray {
 		serverMap, ok := s.(map[string]interface{})
 		if !ok {
+			// Non-map entry, append as-is (edge case)
 			result = append(result, s)
 			continue
 		}
 
 		name, hasName := serverMap["name"].(string)
 		if !hasName {
-			// No name field, append as new
+			// No name field, append as new (can't match existing)
 			result = append(result, s)
 			continue
 		}
 
 		// Check if server exists in dest
 		if existingServer, found := destServers[name]; found {
-			// Update existing server (merge fields)
-			merged := mergeMaps(existingServer, serverMap)
-			result = append(result, merged)
+			if !updatedNames[name] {
+				// First update: replace dest entry with merged version
+				// Find and replace in result
+				for i, r := range result {
+					if rMap, ok := r.(map[string]interface{}); ok {
+						if rName, ok := rMap["name"].(string); ok && rName == name {
+							result[i] = mergeMaps(existingServer, serverMap)
+							updatedNames[name] = true
+							break
+						}
+					}
+				}
+			}
+			// Already updated, skip duplicates in src
 		} else {
 			// New server, append
 			result = append(result, s)
