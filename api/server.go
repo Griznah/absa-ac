@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -17,6 +19,8 @@ type Server struct {
 	logger       *log.Logger
 	bearerToken  string
 	corsOrigins  []string
+	rateLimit    int
+	rateBurst    int
 
 	// wg tracks graceful shutdown completion
 	wg sync.WaitGroup
@@ -34,7 +38,22 @@ type ConfigManager interface {
 // Port is the listen address (e.g., "8080" for :8080)
 // Bearer token is required for all authenticated endpoints
 // CORS origins is a list of allowed origins (empty = no CORS, "*" = all)
+// Rate limits read from env vars API_RATE_LIMIT (default 10) and API_RATE_BURST (default 20)
 func NewServer(cm ConfigManager, port string, bearerToken string, corsOrigins []string, logger *log.Logger) *Server {
+	// Read rate limit from environment (allows runtime configuration)
+	rateLimit := 10
+	rateBurst := 20
+	if val := os.Getenv("API_RATE_LIMIT"); val != "" {
+		if n, err := strconv.Atoi(val); err == nil && n > 0 {
+			rateLimit = n
+		}
+	}
+	if val := os.Getenv("API_RATE_BURST"); val != "" {
+		if n, err := strconv.Atoi(val); err == nil && n > 0 {
+			rateBurst = n
+		}
+	}
+
 	return &Server{
 		cm:          cm,
 		bearerToken: bearerToken,
@@ -42,10 +61,12 @@ func NewServer(cm ConfigManager, port string, bearerToken string, corsOrigins []
 		logger:      logger,
 		httpServer: &http.Server{
 			Addr:         ":" + port,
-			ReadTimeout:  15 * time.Second,
-			WriteTimeout: 15 * time.Second,
+			ReadTimeout:  15 * time.Second, // Prevents slow clients
+			WriteTimeout: 15 * time.Second, // Prevents slow clients
 			IdleTimeout:  60 * time.Second,
 		},
+		rateLimit: rateLimit,
+		rateBurst: rateBurst,
 	}
 }
 
@@ -57,11 +78,16 @@ func (s *Server) Start(ctx context.Context) error {
 	mux := http.NewServeMux()
 
 	// Apply middleware chain (order matters: outermost first)
+	// Security headers: outermost (applies to all responses even on error)
 	securityHeadersMiddleware := SecurityHeaders()
+	// CORS: second layer (cross-origin checks before auth)
 	corsMiddleware := CORS(s.corsOrigins)
-	authMiddleware := BearerAuth(s.bearerToken)
-	rateLimitMiddleware := RateLimit(10, 20) // 10 req/sec, burst 20
+	// Logger: third layer (logs all requests)
 	loggerMiddleware := Logger(s.logger)
+	// Rate limiting: fourth layer (throttling before expensive auth)
+	rateLimitMiddleware := RateLimit(s.rateLimit, s.rateBurst)
+	// Auth: innermost (validates Bearer token only after other checks pass)
+	authMiddleware := BearerAuth(s.bearerToken)
 
 	var handler http.Handler = mux
 	handler = securityHeadersMiddleware(handler)
