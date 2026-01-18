@@ -86,16 +86,11 @@ func loadEnv() error {
 // ================= CONFIG =================
 
 var (
-	discordToken string
-	channelID    string
-
-	// API configuration
-	apiEnabled      bool
-	apiPort         string
-	apiBearerToken  string
-	apiCorsOrigins  string
-	apiServer       *api.Server
-	apiServerCancel context.CancelFunc
+	// API configuration flags (read from environment, stored in Bot struct)
+	apiEnabled     bool
+	apiPort        string
+	apiBearerToken string
+	apiCorsOrigins string
 )
 
 type Server struct {
@@ -281,9 +276,10 @@ func (cm *ConfigManager) WriteConfig(newConfig *Config) error {
 		return fmt.Errorf("atomic write failed: %w", err)
 	}
 
-	// Update mod time to trigger reload
+	// Update mod time to trigger reload (must hold lock until complete)
+	// Moving touchConfigFile inside lock prevents race with reload
 	if err := cm.touchConfigFile(); err != nil {
-		log.Printf("Warning: failed to update config mod time: %v", err)
+		return fmt.Errorf("failed to update config mod time: %w", err)
 	}
 
 	return nil
@@ -339,7 +335,8 @@ func (cm *ConfigManager) UpdateConfig(partial map[string]interface{}) error {
 	return nil
 }
 
-// createBackup creates a backup of the current config file
+// createBackup creates a backup of the current config file with rotation
+// Implements 3-version backup rotation: .backup.1 (latest) -> .backup.2 -> .backup.3 (oldest)
 // Backup path is config.json.backup in same directory as config file
 // Returns nil if config file doesn't exist yet (first-time write)
 func (cm *ConfigManager) createBackup() error {
@@ -353,13 +350,48 @@ func (cm *ConfigManager) createBackup() error {
 		return err
 	}
 
-	// Write to backup file
-	backupPath := cm.configPath + ".backup"
-	if err := os.WriteFile(backupPath, data, 0644); err != nil {
-		return err
+	// Implement backup rotation: .backup.1 (latest) -> .backup.2 -> .backup.3 (oldest)
+	backupPaths := []string{
+		cm.configPath + ".backup.3", // Oldest - deleted first
+		cm.configPath + ".backup.2",
+		cm.configPath + ".backup.1",
+		cm.configPath + ".backup", // Current backup
 	}
 
-	log.Printf("Config backup created: %s", backupPath)
+	// Rotate: delete .backup.3 if exists
+	if _, err := os.Stat(backupPaths[0]); err == nil {
+		if err := os.Remove(backupPaths[0]); err != nil {
+			return fmt.Errorf("failed to remove %s: %w", backupPaths[0], err)
+		}
+	}
+
+	// Rotate: .backup.2 -> .backup.3
+	if _, err := os.Stat(backupPaths[1]); err == nil {
+		if err := os.Rename(backupPaths[1], backupPaths[0]); err != nil {
+			return fmt.Errorf("failed to rename %s -> %s: %w", backupPaths[1], backupPaths[0], err)
+		}
+	}
+
+	// Rotate: .backup.1 -> .backup.2
+	if _, err := os.Stat(backupPaths[2]); err == nil {
+		if err := os.Rename(backupPaths[2], backupPaths[1]); err != nil {
+			return fmt.Errorf("failed to rename %s -> %s: %w", backupPaths[2], backupPaths[1], err)
+		}
+	}
+
+	// Current -> .backup.1
+	if _, err := os.Stat(backupPaths[3]); err == nil {
+		if err := os.Rename(backupPaths[3], backupPaths[2]); err != nil {
+			return fmt.Errorf("failed to rename %s -> %s: %w", backupPaths[3], backupPaths[2], err)
+		}
+	}
+
+	// Write current config to .backup
+	if err := os.WriteFile(backupPaths[3], data, 0644); err != nil {
+		return fmt.Errorf("failed to write backup: %w", err)
+	}
+
+	log.Printf("Config backup rotated: %s (latest of 3 versions)", backupPaths[3])
 	return nil
 }
 
@@ -380,6 +412,7 @@ func (cm *ConfigManager) atomicWrite(data []byte) error {
 		if tmpFile != nil {
 			tmpFile.Close()
 			os.Remove(tmpPath)
+			log.Printf("Cleaned up temp file: %s", tmpPath)
 		}
 	}()
 
@@ -397,10 +430,13 @@ func (cm *ConfigManager) atomicWrite(data []byte) error {
 	if err := tmpFile.Close(); err != nil {
 		return err
 	}
-	tmpFile = nil // Defer cleanup will skip
+	tmpFile = nil // Prevent defer cleanup (file successfully closed)
 
 	// Atomic rename over target
 	if err := os.Rename(tmpPath, cm.configPath); err != nil {
+		// On rename error, tmpFile already closed but defer won't cleanup
+		// Manually clean up the orphaned temp file
+		os.Remove(tmpPath)
 		return err
 	}
 
@@ -485,6 +521,9 @@ func mergeMaps(dest, src map[string]interface{}) map[string]interface{} {
 			if destIsMap && srcIsMap {
 				// Recursive merge
 				result[k] = mergeMaps(destMap, srcMap)
+			} else if k == "servers" {
+				// Special handling for servers array: merge by name instead of replacing
+				result[k] = mergeServerArrays(destVal, v)
 			} else {
 				// Override with src value
 				result[k] = v
@@ -492,6 +531,57 @@ func mergeMaps(dest, src map[string]interface{}) map[string]interface{} {
 		} else {
 			// New key in src
 			result[k] = v
+		}
+	}
+
+	return result
+}
+
+// mergeServerArrays merges server arrays by name instead of replacing
+// Servers from partial update existing servers by name, new servers are appended
+func mergeServerArrays(dest, src interface{}) interface{} {
+	destArray, destOk := dest.([]interface{})
+	srcArray, srcOk := src.([]interface{})
+
+	// If either is not an array, replace (fallback to original behavior)
+	if !destOk || !srcOk {
+		return src
+	}
+
+	// Build map of existing servers by name
+	destServers := make(map[string]map[string]interface{})
+	for _, s := range destArray {
+		if serverMap, ok := s.(map[string]interface{}); ok {
+			if name, hasName := serverMap["name"].(string); hasName {
+				destServers[name] = serverMap
+			}
+		}
+	}
+
+	// Merge: update existing servers by name, append new ones
+	var result []interface{}
+	for _, s := range srcArray {
+		serverMap, ok := s.(map[string]interface{})
+		if !ok {
+			result = append(result, s)
+			continue
+		}
+
+		name, hasName := serverMap["name"].(string)
+		if !hasName {
+			// No name field, append as new
+			result = append(result, s)
+			continue
+		}
+
+		// Check if server exists in dest
+		if existingServer, found := destServers[name]; found {
+			// Update existing server (merge fields)
+			merged := mergeMaps(existingServer, serverMap)
+			result = append(result, merged)
+		} else {
+			// New server, append
+			result = append(result, s)
 		}
 	}
 
@@ -590,6 +680,10 @@ type Bot struct {
 	configManager *ConfigManager
 	serverMessage *discordgo.Message
 	messageMutex  sync.RWMutex
+
+	// API server (optional - nil if disabled)
+	apiServer *api.Server
+	apiCancel context.CancelFunc
 }
 
 // Config holds application configuration loaded from config.json
@@ -1056,7 +1150,9 @@ func createDiscordSession(token string) (*discordgo.Session, error) {
 	return session, nil
 }
 
-func NewBot(cfgManager *ConfigManager, token, channelID string) (*Bot, error) {
+// NewBot creates a new Bot instance with Discord session and optional API server
+// Accepts dependencies via constructor injection (enables testing with mocks)
+func NewBot(cfgManager *ConfigManager, token, channelID string, apiEnabled bool, apiPort, apiBearerToken, apiCorsOrigins string) (*Bot, error) {
 	if token == "" {
 		return nil, fmt.Errorf("DISCORD_TOKEN environment variable not set")
 	}
@@ -1069,17 +1165,60 @@ func NewBot(cfgManager *ConfigManager, token, channelID string) (*Bot, error) {
 		return nil, err
 	}
 
+	bot := &Bot{
+		session:       session,
+		channelID:     channelID,
+		configManager: cfgManager,
+	}
+
+	// Create API server if enabled
+	if apiEnabled {
+		if apiBearerToken == "" {
+			return nil, fmt.Errorf("API_ENABLED=true but API_BEARER_TOKEN is not set")
+		}
+
+		// Parse CORS origins
+		var corsOrigins []string
+		if apiCorsOrigins != "" {
+			corsOrigins = strings.Split(apiCorsOrigins, ",")
+			// Trim whitespace from each origin
+			for i, origin := range corsOrigins {
+				corsOrigins[i] = strings.TrimSpace(origin)
+			}
+		}
+
+		bot.apiServer = api.NewServer(cfgManager, apiPort, apiBearerToken, corsOrigins, log.Default())
+		log.Printf("API server configured on port %s with CORS origins: %s", apiPort, apiCorsOrigins)
+	}
+
 	return &Bot{
 		session:       session,
 		channelID:     channelID,
 		configManager: cfgManager,
+		apiServer:     bot.apiServer,
 	}, nil
 }
 
+// Start launches the Discord bot and optional API server
+// Discord bot connects immediately, API server starts in background goroutine
 func (b *Bot) Start() error {
 	if err := b.session.Open(); err != nil {
 		return fmt.Errorf("failed to open Discord connection: %w", err)
 	}
+
+	// Start API server in background if configured
+	if b.apiServer != nil {
+		ctx, cancel := context.WithCancel(context.Background())
+		b.apiCancel = cancel
+
+		go func() {
+			if err := b.apiServer.Start(ctx); err != nil {
+				log.Printf("API server error: %v", err)
+			}
+		}()
+		log.Println("API server started")
+	}
+
 	return nil
 }
 
@@ -1091,10 +1230,10 @@ func (b *Bot) WaitForShutdown() {
 	log.Println("Shutting down...")
 
 	// Stop API server if running
-	if apiServer != nil && apiServerCancel != nil {
+	if b.apiServer != nil && b.apiCancel != nil {
 		log.Println("Stopping API server...")
-		apiServerCancel()
-		if err := apiServer.Stop(); err != nil {
+		b.apiCancel()
+		if err := b.apiServer.Stop(); err != nil {
 			log.Printf("Error stopping API server: %v", err)
 		}
 	}
@@ -1170,8 +1309,6 @@ func main() {
 		log.Fatalf("Configuration error: %v", err)
 	}
 
-	discordToken = token
-
 	// Load and validate config.json
 	cfg, err := loadConfig(*configPath)
 	if err != nil {
@@ -1184,7 +1321,7 @@ func main() {
 
 	// Create config manager with initial config
 	configManager := NewConfigManager(getConfigPath(*configPath), cfg)
-	bot, err := NewBot(configManager, token, channelID)
+	bot, err := NewBot(configManager, token, channelID, apiEnabled, apiPort, apiBearerToken, apiCorsOrigins)
 	if err != nil {
 		log.Fatalf("Failed to create bot: %v", err)
 	}
@@ -1193,32 +1330,6 @@ func main() {
 
 	if err := bot.Start(); err != nil {
 		log.Fatalf("Failed to start bot: %v", err)
-	}
-
-	// Start API server if enabled
-	if apiEnabled {
-		// Parse CORS origins
-		var corsOrigins []string
-		if apiCorsOrigins != "" {
-			corsOrigins = strings.Split(apiCorsOrigins, ",")
-			// Trim whitespace from each origin
-			for i, origin := range corsOrigins {
-				corsOrigins[i] = strings.TrimSpace(origin)
-			}
-		}
-
-		// Create API server
-		apiServer = api.NewServer(configManager, apiPort, apiBearerToken, corsOrigins, log.Default())
-
-		// Start API server in background (handles graceful shutdown on context cancellation)
-		ctx, cancel := context.WithCancel(context.Background())
-		apiServerCancel = cancel
-
-		go func() {
-			if err := apiServer.Start(ctx); err != nil {
-				log.Printf("API server error: %v", err)
-			}
-		}()
 	}
 
 	// Wait for shutdown signal
