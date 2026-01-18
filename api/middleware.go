@@ -1,0 +1,207 @@
+package api
+
+import (
+	"fmt"
+	"log"
+	"net/http"
+	"sync"
+	"time"
+
+	"golang.org/x/time/rate"
+)
+
+// BearerAuth validates Bearer token authentication
+// Returns 401 Unauthorized if token is missing or invalid
+// Follows RFC 6750 OAuth2 Bearer Token specification
+func BearerAuth(token string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Health check bypasses auth
+			if r.URL.Path == "/health" {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			auth := r.Header.Get("Authorization")
+			if auth == "" {
+				WriteError(w, http.StatusUnauthorized, "Missing Authorization header",
+					"Request requires Bearer token authentication")
+				return
+			}
+
+			// Validate "Bearer <token>" format
+			const prefix = "Bearer "
+			if len(auth) < len(prefix) || auth[:len(prefix)] != prefix {
+				WriteError(w, http.StatusUnauthorized, "Invalid Authorization header format",
+					"Expected format: Authorization: Bearer <token>")
+				return
+			}
+
+			if auth[len(prefix):] != token {
+				WriteError(w, http.StatusUnauthorized, "Invalid Bearer token",
+					"The provided token is not valid")
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// RateLimit implements token bucket rate limiting per client IP
+// Prevents DoS attacks by limiting request frequency
+// requestsPerSecond: steady-state rate limit
+// burstSize: maximum burst size for bursty traffic
+func RateLimit(requestsPerSecond int, burstSize int) func(http.Handler) http.Handler {
+	// Track limiters per IP address
+	limiters := make(map[string]*rate.Limiter)
+	var mu sync.Mutex
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Health check bypasses rate limiting
+			if r.URL.Path == "/health" {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// Extract client IP
+			clientIP := r.RemoteAddr
+			if forwardedFor := r.Header.Get("X-Forwarded-For"); forwardedFor != "" {
+				clientIP = forwardedFor
+			}
+
+			// Get or create limiter for this IP
+			mu.Lock()
+			limiter, exists := limiters[clientIP]
+			if !exists {
+				limiter = rate.NewLimiter(rate.Limit(requestsPerSecond), burstSize)
+				limiters[clientIP] = limiter
+			}
+			mu.Unlock()
+
+			// Check rate limit
+			if !limiter.Allow() {
+				WriteError(w, http.StatusTooManyRequests, "Rate limit exceeded",
+					fmt.Sprintf("More than %d requests per second allowed", requestsPerSecond))
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// Logger logs all HTTP requests with method, path, status, and duration
+// Redacts sensitive information like Bearer tokens from logs
+func Logger(logger *log.Logger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			start := time.Now()
+
+			// Redact Authorization header for logging
+			auth := r.Header.Get("Authorization")
+			if auth != "" {
+				r.Header.Set("Authorization", "Bearer <redacted>")
+			}
+
+			// Wrap response writer to capture status code
+			wrapped := &responseWriter{ResponseWriter: w, status: http.StatusOK}
+
+			next.ServeHTTP(wrapped, r)
+
+			// Log request
+			duration := time.Since(start)
+			logger.Printf("%s %s - %d (%v)",
+				r.Method,
+				r.URL.Path,
+				wrapped.status,
+				duration,
+			)
+		})
+	}
+}
+
+// responseWriter wraps http.ResponseWriter to capture status code
+type responseWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (rw *responseWriter) WriteHeader(status int) {
+	rw.status = status
+	rw.ResponseWriter.WriteHeader(status)
+}
+
+// CORS implements Cross-Origin Resource Sharing middleware
+// allowedOrigins is a list of allowed origin URLs (e.g., "https://example.com")
+// Empty list means no CORS headers are set (same-origin only)
+// "*" allows all origins (use with caution)
+func CORS(allowedOrigins []string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			origin := r.Header.Get("Origin")
+
+			// If no Origin header, skip CORS (not a cross-origin request)
+			if origin == "" {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// Check if origin is allowed
+			allowed := false
+			for _, allowedOrigin := range allowedOrigins {
+				if allowedOrigin == "*" || allowedOrigin == origin {
+					allowed = true
+					break
+				}
+			}
+
+			if !allowed {
+				// Origin not in whitelist - return 403 Forbidden
+				WriteError(w, http.StatusForbidden, "Origin not allowed",
+					fmt.Sprintf("Origin '%s' is not in the allowed origins list", origin))
+				return
+			}
+
+			// Set CORS headers
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+
+			// Handle preflight requests
+			if r.Method == "OPTIONS" {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// SecurityHeaders adds security-related HTTP headers to all responses
+// Helps prevent XSS, clickjacking, and other security vulnerabilities
+func SecurityHeaders() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Prevent MIME type sniffing
+			w.Header().Set("X-Content-Type-Options", "nosniff")
+
+			// Prevent clickjacking
+			w.Header().Set("X-Frame-Options", "DENY")
+
+			// XSS protection (legacy, but still useful for older browsers)
+			w.Header().Set("X-XSS-Protection", "1; mode=block")
+
+			// Content Security Policy (restricts sources of content)
+			w.Header().Set("Content-Security-Policy", "default-src 'self'")
+
+			// Referrer Policy
+			w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}

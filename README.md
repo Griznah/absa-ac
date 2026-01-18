@@ -13,6 +13,7 @@ Discord bot for monitoring and displaying status information for Assetto Corsa r
 - Server categories: Drift, Touge, Track
 - Message cleanup on startup to remove old bot messages
 - Graceful error handling with automatic message recovery
+- **REST API** for dynamic configuration management (optional)
 
 ## Prerequisites
 
@@ -161,6 +162,102 @@ Create `config.json` in the working directory with the following structure:
 - Every server's `category` field must match one of the categories in `category_order`
 - Port numbers must be within valid range (1-65535)
 - The `server_ip` is automatically prepended to each server's address for HTTP queries
+
+## REST API (Optional)
+
+The bot includes an optional REST API for dynamic configuration management. When enabled, the API runs alongside the Discord bot, allowing you to update `config.json` via HTTP requests without restarting the bot.
+
+### Enabling the API
+
+Set the following environment variables:
+
+```bash
+# Enable the REST API server
+API_ENABLED=true
+
+# API server port (default: 8080)
+API_PORT=8080
+
+# Bearer token for authentication (required if API_ENABLED=true)
+API_BEARER_TOKEN=your-secure-token-here
+
+# Optional: Comma-separated list of allowed CORS origins
+# Leave empty for no CORS, use "*" for all origins
+API_CORS_ORIGINS=https://example.com,https://app.com
+```
+
+### API Endpoints
+
+All endpoints (except `/health`) require Bearer token authentication:
+
+```bash
+# Set your token
+export API_TOKEN="your-secure-token-here"
+
+# Health check (no auth required)
+curl http://localhost:8080/health
+
+# Get current configuration
+curl -H "Authorization: Bearer $API_TOKEN" \
+  http://localhost:8080/api/config
+
+# Get servers only
+curl -H "Authorization: Bearer $API_TOKEN" \
+  http://localhost:8080/api/config/servers
+
+# Partial update (PATCH) - merges with existing config
+curl -X PATCH \
+  -H "Authorization: Bearer $API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"update_interval": 120}' \
+  http://localhost:8080/api/config
+
+# Full replacement (PUT) - replaces entire config
+curl -X PUT \
+  -H "Authorization: Bearer $API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d @config.json \
+  http://localhost:8080/api/config
+
+# Validate without applying
+curl -X POST \
+  -H "Authorization: Bearer $API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d @config.json \
+  http://localhost:8080/api/config/validate
+```
+
+### API Features
+
+- **Atomic writes**: Config updates use temp-file-then-rename pattern to prevent corruption
+- **Backup protection**: Every write creates `config.json.backup` for rollback
+- **Automatic reload**: Changes trigger the existing 30-second polling cycle to reload config
+- **Bearer token auth**: RFC 6750 compliant authentication
+- **Rate limiting**: 10 req/sec per IP with 20 request burst
+- **CORS support**: Configurable cross-origin requests for web applications
+- **Security headers**: X-Content-Type-Options, X-Frame-Options, CSP included
+
+### Response Format
+
+Success responses:
+```json
+{
+  "data": {
+    "server_ip": "192.168.1.100",
+    "update_interval": 120,
+    "category_order": ["Drift", "Track"],
+    ...
+  }
+}
+```
+
+Error responses:
+```json
+{
+  "error": "Config validation failed",
+  "details": "server_ip cannot be empty"
+}
+```
 
 ## Deployment
 
