@@ -1,9 +1,11 @@
 package api
 
 import (
+	"crypto/subtle"
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -37,7 +39,8 @@ func BearerAuth(token string) func(http.Handler) http.Handler {
 				return
 			}
 
-			if auth[len(prefix):] != token {
+			// Use timing-safe comparison to prevent timing attacks
+			if subtle.ConstantTimeCompare([]byte(auth[len(prefix):]), []byte(token)) != 1 {
 				WriteError(w, http.StatusUnauthorized, "Invalid Bearer token",
 					"The provided token is not valid")
 				return
@@ -54,7 +57,12 @@ func BearerAuth(token string) func(http.Handler) http.Handler {
 // burstSize: maximum burst size for bursty traffic
 func RateLimit(requestsPerSecond int, burstSize int) func(http.Handler) http.Handler {
 	// Track limiters per IP address
-	limiters := make(map[string]*rate.Limiter)
+	type limiterEntry struct {
+		limiter     *rate.Limiter
+		lastAccess  time.Time
+	}
+
+	limiters := make(map[string]*limiterEntry)
 	var mu sync.Mutex
 
 	return func(next http.Handler) http.Handler {
@@ -68,20 +76,38 @@ func RateLimit(requestsPerSecond int, burstSize int) func(http.Handler) http.Han
 			// Extract client IP
 			clientIP := r.RemoteAddr
 			if forwardedFor := r.Header.Get("X-Forwarded-For"); forwardedFor != "" {
-				clientIP = forwardedFor
+				// Trust rightmost IP (last proxy) not leftmost (can be spoofed)
+				// X-Forwarded-For format: "client-ip, proxy1-ip, proxy2-ip"
+				ips := strings.Split(forwardedFor, ",")
+				clientIP = strings.TrimSpace(ips[len(ips)-1])
 			}
 
 			// Get or create limiter for this IP
 			mu.Lock()
-			limiter, exists := limiters[clientIP]
+			entry, exists := limiters[clientIP]
 			if !exists {
-				limiter = rate.NewLimiter(rate.Limit(requestsPerSecond), burstSize)
-				limiters[clientIP] = limiter
+				entry = &limiterEntry{
+					limiter:    rate.NewLimiter(rate.Limit(requestsPerSecond), burstSize),
+					lastAccess: time.Now(),
+				}
+				limiters[clientIP] = entry
+			} else {
+				// Update last access time
+				entry.lastAccess = time.Now()
+			}
+
+			// Clean up stale limiters (inline cleanup on each request)
+			// This prevents unbounded memory growth without a background goroutine
+			now := time.Now()
+			for ip, limiterEntry := range limiters {
+				if now.Sub(limiterEntry.lastAccess) > 5*time.Minute {
+					delete(limiters, ip)
+				}
 			}
 			mu.Unlock()
 
 			// Check rate limit
-			if !limiter.Allow() {
+			if !entry.limiter.Allow() {
 				WriteError(w, http.StatusTooManyRequests, "Rate limit exceeded",
 					fmt.Sprintf("More than %d requests per second allowed", requestsPerSecond))
 				return
@@ -149,6 +175,20 @@ func CORS(allowedOrigins []string) func(http.Handler) http.Handler {
 			}
 
 			// Check if origin is allowed
+			// Validate allowlist: reject "*" mixed with other origins (security risk)
+			hasWildcard := false
+			for _, origin := range allowedOrigins {
+				if origin == "*" {
+					hasWildcard = true
+					break
+				}
+			}
+			if hasWildcard && len(allowedOrigins) > 1 {
+				WriteError(w, http.StatusInternalServerError, "CORS configuration error",
+					"Wildcard '*' cannot be combined with specific origins")
+				return
+			}
+
 			allowed := false
 			for _, allowedOrigin := range allowedOrigins {
 				if allowedOrigin == "*" || allowedOrigin == origin {
@@ -158,7 +198,7 @@ func CORS(allowedOrigins []string) func(http.Handler) http.Handler {
 			}
 
 			if !allowed {
-				// Origin not in whitelist - return 403 Forbidden
+				// Origin not in allowlist - return 403 Forbidden
 				WriteError(w, http.StatusForbidden, "Origin not allowed",
 					fmt.Sprintf("Origin '%s' is not in the allowed origins list", origin))
 				return
