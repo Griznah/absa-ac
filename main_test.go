@@ -1985,7 +1985,7 @@ func TestConfigReload_SameServerIP(t *testing.T) {
 	// Write config with same ServerIP but different UpdateInterval
 	newConfig := &Config{
 		ServerIP:       "192.168.1.1", // Same IP
-		UpdateInterval: 60,             // Different interval
+		UpdateInterval: 60,            // Different interval
 		CategoryOrder:  []string{"Drift"},
 		CategoryEmojis: map[string]string{"Drift": "🟣"},
 		Servers: []Server{
@@ -2190,4 +2190,249 @@ func TestConfigReload_ConcurrentAccessWithIPs(t *testing.T) {
 	}
 
 	t.Logf("Final consistent state: ServerIP=%s, all server IPs match", cfg.ServerIP)
+}
+
+// TestConfigManager_WriteConfig_Normal tests writing a valid config creates backup and updates file
+func TestConfigManager_WriteConfig_Normal(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	initialCfg := &Config{
+		ServerIP:       "10.0.0.1",
+		UpdateInterval: 60,
+		CategoryOrder:  []string{"Race"},
+		CategoryEmojis: map[string]string{"Race": "🏎️"},
+		Servers: []Server{
+			{Name: "TestServer", Port: 9999, Category: "Race", IP: "10.0.0.1"},
+		},
+	}
+
+	cm := NewConfigManager(configPath, initialCfg)
+
+	// Write initial config (first write, no backup expected)
+	if err := cm.WriteConfig(initialCfg); err != nil {
+		t.Fatalf("First WriteConfig failed: %v", err)
+	}
+
+	// Verify config file exists
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		t.Error("Config file was not created")
+	}
+
+	// No backup should exist on first write
+	backupPath := configPath + ".backup"
+	if _, err := os.Stat(backupPath); err == nil {
+		t.Error("Backup should not exist on first write (nothing to backup)")
+	}
+
+	// Write second config (should create backup this time)
+	secondCfg := &Config{
+		ServerIP:       "10.0.0.2",
+		UpdateInterval: 60,
+		CategoryOrder:  []string{"Race"},
+		CategoryEmojis: map[string]string{"Race": "🏎️"},
+		Servers: []Server{
+			{Name: "TestServer", Port: 9999, Category: "Race", IP: "10.0.0.2"},
+		},
+	}
+
+	if err := cm.WriteConfig(secondCfg); err != nil {
+		t.Fatalf("Second WriteConfig failed: %v", err)
+	}
+
+	// Verify backup exists now
+	if _, err := os.Stat(backupPath); os.IsNotExist(err) {
+		t.Error("Backup file was not created on second write")
+	}
+
+	// Verify file content contains second config
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("Failed to read config file: %v", err)
+	}
+
+	var cfg Config
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("Failed to parse config file: %v", err)
+	}
+
+	if cfg.ServerIP != "10.0.0.2" {
+		t.Errorf("Expected ServerIP '10.0.0.2', got '%s'", cfg.ServerIP)
+	}
+
+	// Verify backup contains first config
+	backupData, err := os.ReadFile(backupPath)
+	if err != nil {
+		t.Fatalf("Failed to read backup file: %v", err)
+	}
+
+	var backupCfg Config
+	if err := json.Unmarshal(backupData, &backupCfg); err != nil {
+		t.Fatalf("Failed to parse backup file: %v", err)
+	}
+
+	if backupCfg.ServerIP != "10.0.0.1" {
+		t.Errorf("Expected backup ServerIP '10.0.0.1', got '%s'", backupCfg.ServerIP)
+	}
+}
+
+// TestConfigManager_WriteConfig_ConcurrentWrites tests that concurrent writes are serialized
+func TestConfigManager_WriteConfig_ConcurrentWrites(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	initialCfg := &Config{
+		ServerIP:       "10.0.0.1",
+		UpdateInterval: 30,
+		CategoryOrder:  []string{"Race"},
+		CategoryEmojis: map[string]string{"Race": "🏎️"},
+		Servers: []Server{
+			{Name: "Server1", Port: 8001, Category: "Race", IP: "10.0.0.1"},
+		},
+	}
+
+	cm := NewConfigManager(configPath, initialCfg)
+
+	// Launch concurrent writes
+	done := make(chan bool, 10)
+	for i := 0; i < 10; i++ {
+		go func(idx int) {
+			cfg := &Config{
+				ServerIP:       fmt.Sprintf("10.0.0.%d", idx+1),
+				UpdateInterval: 30,
+				CategoryOrder:  []string{"Race"},
+				CategoryEmojis: map[string]string{"Race": "🏎️"},
+				Servers: []Server{
+					{Name: fmt.Sprintf("Server%d", idx+1), Port: 8000 + idx, Category: "Race", IP: fmt.Sprintf("10.0.0.%d", idx+1)},
+				},
+			}
+			_ = cm.WriteConfig(cfg)
+			done <- true
+		}(i)
+	}
+
+	// Wait for all goroutines
+	for i := 0; i < 10; i++ {
+		<-done
+	}
+
+	// Verify final config is valid
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("Failed to read config: %v", err)
+	}
+
+	var cfg Config
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Errorf("Final config is invalid JSON: %v", err)
+	}
+}
+
+// TestConfigManager_WriteConfig_InvalidConfig tests that invalid config returns error without modifying file
+func TestConfigManager_WriteConfig_InvalidConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	initialCfg := &Config{
+		ServerIP:       "10.0.0.1",
+		UpdateInterval: 60,
+		CategoryOrder:  []string{"Race"},
+		CategoryEmojis: map[string]string{"Race": "🏎️"},
+		Servers: []Server{
+			{Name: "TestServer", Port: 9999, Category: "Race", IP: "10.0.0.1"},
+		},
+	}
+
+	cm := NewConfigManager(configPath, initialCfg)
+
+	// Write valid initial config
+	if err := cm.WriteConfig(initialCfg); err != nil {
+		t.Fatalf("Initial WriteConfig failed: %v", err)
+	}
+
+	// Get initial file content
+	initialData, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("Failed to read initial config: %v", err)
+	}
+
+	// Try to write invalid config (empty ServerIP)
+	invalidCfg := &Config{
+		ServerIP:       "",
+		UpdateInterval: 60,
+		CategoryOrder:  []string{"Race"},
+		CategoryEmojis: map[string]string{"Race": "🏎️"},
+		Servers:        []Server{},
+	}
+
+	err = cm.WriteConfig(invalidCfg)
+	if err == nil {
+		t.Error("WriteConfig should have returned error for invalid config")
+	}
+
+	// Verify file was not modified
+	finalData, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("Failed to read final config: %v", err)
+	}
+
+	if string(initialData) != string(finalData) {
+		t.Error("Config file was modified despite validation error")
+	}
+}
+
+// TestConfigManager_UpdateConfig_Normal tests partial config update
+func TestConfigManager_UpdateConfig_Normal(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	initialCfg := &Config{
+		ServerIP:       "10.0.0.1",
+		UpdateInterval: 60,
+		CategoryOrder:  []string{"Race", "Drift"},
+		CategoryEmojis: map[string]string{"Race": "🏎️", "Drift": "🏁"},
+		Servers: []Server{
+			{Name: "Server1", Port: 8001, Category: "Race", IP: "10.0.0.1"},
+			{Name: "Server2", Port: 8002, Category: "Drift", IP: "10.0.0.1"},
+		},
+	}
+
+	cm := NewConfigManager(configPath, initialCfg)
+
+	// Write initial config
+	if err := cm.WriteConfig(initialCfg); err != nil {
+		t.Fatalf("Initial WriteConfig failed: %v", err)
+	}
+
+	// Update just the UpdateInterval
+	partial := map[string]interface{}{
+		"update_interval": 120,
+	}
+
+	if err := cm.UpdateConfig(partial); err != nil {
+		t.Fatalf("UpdateConfig failed: %v", err)
+	}
+
+	// Verify update was applied
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("Failed to read config: %v", err)
+	}
+
+	var cfg Config
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("Failed to parse config: %v", err)
+	}
+
+	if cfg.UpdateInterval != 120 {
+		t.Errorf("Expected UpdateInterval 120, got %d", cfg.UpdateInterval)
+	}
+
+	if cfg.ServerIP != "10.0.0.1" {
+		t.Errorf("ServerIP should remain '10.0.0.1', got '%s'", cfg.ServerIP)
+	}
+
+	if len(cfg.Servers) != 2 {
+		t.Errorf("Should have 2 servers, got %d", len(cfg.Servers))
+	}
 }

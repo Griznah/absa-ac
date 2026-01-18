@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/bombom/absa-ac/api"
 	"github.com/bwmarrin/discordgo"
 )
 
@@ -87,6 +88,14 @@ func loadEnv() error {
 var (
 	discordToken string
 	channelID    string
+
+	// API configuration
+	apiEnabled      bool
+	apiPort         string
+	apiBearerToken  string
+	apiCorsOrigins  string
+	apiServer       *api.Server
+	apiServerCancel context.CancelFunc
 )
 
 type Server struct {
@@ -236,6 +245,277 @@ func (cm *ConfigManager) Cleanup() {
 	if cm.debounceTimer != nil {
 		cm.debounceTimer.Stop()
 		cm.debounceTimer = nil
+	}
+}
+
+// WriteConfig writes a complete new configuration to disk with backup and atomic write
+// Creates backup file before modifying, writes to temp file, then atomic rename
+// Returns error if validation fails (config unchanged on disk)
+// Triggers reload via file mtime change on success
+// Thread-safe: serializes concurrent writes using RWMutex write lock
+func (cm *ConfigManager) WriteConfig(newConfig *Config) error {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+
+	// Validate new config before making any changes
+	if err := validateConfigStructSafeRuntime(newConfig); err != nil {
+		return fmt.Errorf("config validation failed: %w", err)
+	}
+
+	// Initialize server IPs before writing (must happen before atomic swap)
+	initializeServerIPs(newConfig)
+
+	// Create backup before modifying
+	if err := cm.createBackup(); err != nil {
+		return fmt.Errorf("backup creation failed: %w", err)
+	}
+
+	// Serialize config to JSON
+	data, err := json.MarshalIndent(newConfig, "", "  ")
+	if err != nil {
+		return fmt.Errorf("JSON encoding failed: %w", err)
+	}
+
+	// Atomic write: temp file + rename
+	if err := cm.atomicWrite(data); err != nil {
+		return fmt.Errorf("atomic write failed: %w", err)
+	}
+
+	// Update mod time to trigger reload
+	if err := cm.touchConfigFile(); err != nil {
+		log.Printf("Warning: failed to update config mod time: %v", err)
+	}
+
+	return nil
+}
+
+// UpdateConfig applies a partial configuration update by merging with existing config
+// Reads current config, merges partial changes using deep merge, then writes
+// Returns error if validation fails or merge cannot be performed
+// Triggers reload via file mtime change on success
+// Thread-safe: serializes concurrent writes using RWMutex write lock
+func (cm *ConfigManager) UpdateConfig(partial map[string]interface{}) error {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+
+	// Get current config as baseline
+	current := cm.GetConfig()
+
+	// Deep merge partial config with current
+	merged, err := deepMergeConfig(current, partial)
+	if err != nil {
+		return fmt.Errorf("config merge failed: %w", err)
+	}
+
+	// Validate merged config
+	if err := validateConfigStructSafeRuntime(merged); err != nil {
+		return fmt.Errorf("merged config validation failed: %w", err)
+	}
+
+	// Initialize server IPs
+	initializeServerIPs(merged)
+
+	// Create backup
+	if err := cm.createBackup(); err != nil {
+		return fmt.Errorf("backup creation failed: %w", err)
+	}
+
+	// Serialize merged config
+	data, err := json.MarshalIndent(merged, "", "  ")
+	if err != nil {
+		return fmt.Errorf("JSON encoding failed: %w", err)
+	}
+
+	// Atomic write
+	if err := cm.atomicWrite(data); err != nil {
+		return fmt.Errorf("atomic write failed: %w", err)
+	}
+
+	// Update mod time
+	if err := cm.touchConfigFile(); err != nil {
+		log.Printf("Warning: failed to update config mod time: %v", err)
+	}
+
+	return nil
+}
+
+// createBackup creates a backup of the current config file
+// Backup path is config.json.backup in same directory as config file
+// Returns nil if config file doesn't exist yet (first-time write)
+func (cm *ConfigManager) createBackup() error {
+	// Read existing config file
+	data, err := os.ReadFile(cm.configPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// No existing config to backup (first write)
+			return nil
+		}
+		return err
+	}
+
+	// Write to backup file
+	backupPath := cm.configPath + ".backup"
+	if err := os.WriteFile(backupPath, data, 0644); err != nil {
+		return err
+	}
+
+	log.Printf("Config backup created: %s", backupPath)
+	return nil
+}
+
+// atomicWrite writes data to config file using atomic temp-file-then-rename pattern
+// Prevents partial writes during crash/power loss
+// Write to temp file, then rename over original (atomic on POSIX systems)
+func (cm *ConfigManager) atomicWrite(data []byte) error {
+	// Create temp file in same directory as target
+	dir := filepath.Dir(cm.configPath)
+	tmpFile, err := os.CreateTemp(dir, "config.json.*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmpFile.Name()
+
+	// Ensure temp file is cleaned up on error
+	defer func() {
+		if tmpFile != nil {
+			tmpFile.Close()
+			os.Remove(tmpPath)
+		}
+	}()
+
+	// Write data to temp file
+	if _, err := tmpFile.Write(data); err != nil {
+		return err
+	}
+
+	// Sync to disk
+	if err := tmpFile.Sync(); err != nil {
+		return err
+	}
+
+	// Close temp file before rename
+	if err := tmpFile.Close(); err != nil {
+		return err
+	}
+	tmpFile = nil // Defer cleanup will skip
+
+	// Atomic rename over target
+	if err := os.Rename(tmpPath, cm.configPath); err != nil {
+		return err
+	}
+
+	log.Printf("Config written atomically to: %s", cm.configPath)
+	return nil
+}
+
+// touchConfigFile updates the modification time of the config file
+// This triggers the reload mechanism (mtime-based polling)
+func (cm *ConfigManager) touchConfigFile() error {
+	now := time.Now()
+	return os.Chtimes(cm.configPath, now, now)
+}
+
+// WriteConfigAny is an adapter for the API interface that accepts any
+// Converts the input to *Config and calls WriteConfig
+func (cm *ConfigManager) WriteConfigAny(cfg any) error {
+	// Convert map to Config struct
+	config, err := anyToConfig(cfg)
+	if err != nil {
+		return err
+	}
+	return cm.WriteConfig(config)
+}
+
+// GetConfigAny returns the current config as any (for API compatibility)
+func (cm *ConfigManager) GetConfigAny() any {
+	return cm.GetConfig()
+}
+
+// deepMergeConfig merges a partial config map with an existing Config struct
+// Performs deep merge for nested structures (servers, category_emojis)
+// Returns a new Config struct with merged values
+func deepMergeConfig(base *Config, partial map[string]interface{}) (*Config, error) {
+	// Marshal base config to JSON
+	baseData, err := json.Marshal(base)
+	if err != nil {
+		return nil, err
+	}
+
+	// Unmarshal base into map
+	baseMap := make(map[string]interface{})
+	if err := json.Unmarshal(baseData, &baseMap); err != nil {
+		return nil, err
+	}
+
+	// Deep merge partial into base
+	merged := mergeMaps(baseMap, partial)
+
+	// Marshal merged map back to JSON
+	mergedData, err := json.Marshal(merged)
+	if err != nil {
+		return nil, err
+	}
+
+	// Unmarshal into Config struct
+	var result Config
+	if err := json.Unmarshal(mergedData, &result); err != nil {
+		return nil, err
+	}
+
+	return &result, nil
+}
+
+// mergeMaps recursively merges source map into destination map
+// Handles nested maps (like category_emojis) and arrays (like servers)
+func mergeMaps(dest, src map[string]interface{}) map[string]interface{} {
+	result := make(map[string]interface{})
+
+	// Copy dest first
+	for k, v := range dest {
+		result[k] = v
+	}
+
+	// Merge src into result
+	for k, v := range src {
+		if destVal, exists := result[k]; exists {
+			// Both exist - check if both are maps
+			destMap, destIsMap := destVal.(map[string]interface{})
+			srcMap, srcIsMap := v.(map[string]interface{})
+
+			if destIsMap && srcIsMap {
+				// Recursive merge
+				result[k] = mergeMaps(destMap, srcMap)
+			} else {
+				// Override with src value
+				result[k] = v
+			}
+		} else {
+			// New key in src
+			result[k] = v
+		}
+	}
+
+	return result
+}
+
+// anyToConfig converts any value to a *Config struct
+// Handles both *Config and map[string]interface{} inputs
+func anyToConfig(cfg any) (*Config, error) {
+	switch v := cfg.(type) {
+	case *Config:
+		return v, nil
+	case map[string]interface{}:
+		data, err := json.Marshal(v)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal config: %w", err)
+		}
+		var result Config
+		if err := json.Unmarshal(data, &result); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal config: %w", err)
+		}
+		return &result, nil
+	default:
+		return nil, fmt.Errorf("unsupported config type: %T", cfg)
 	}
 }
 
@@ -810,6 +1090,15 @@ func (b *Bot) WaitForShutdown() {
 	<-sigchan
 	log.Println("Shutting down...")
 
+	// Stop API server if running
+	if apiServer != nil && apiServerCancel != nil {
+		log.Println("Stopping API server...")
+		apiServerCancel()
+		if err := apiServer.Stop(); err != nil {
+			log.Printf("Error stopping API server: %v", err)
+		}
+	}
+
 	// Cleanup config manager (stop debounce timer)
 	if b.configManager != nil {
 		b.configManager.Cleanup()
@@ -859,13 +1148,29 @@ func main() {
 		log.Printf("Warning: %v", err)
 	}
 
+	// Read API configuration from environment
+	apiEnabled = os.Getenv("API_ENABLED") == "true"
+	apiPort = os.Getenv("API_PORT")
+	if apiPort == "" {
+		apiPort = "8080" // Default port
+	}
+	apiBearerToken = os.Getenv("API_BEARER_TOKEN")
+	apiCorsOrigins = os.Getenv("API_CORS_ORIGINS")
+
+	// Validate API configuration if enabled
+	if apiEnabled {
+		if apiBearerToken == "" {
+			log.Fatalf("API_ENABLED=true but API_BEARER_TOKEN is not set")
+		}
+		log.Printf("API server enabled on port %s with CORS origins: %s", apiPort, apiCorsOrigins)
+	}
+
 	token, channelID, err := validateConfig()
 	if err != nil {
 		log.Fatalf("Configuration error: %v", err)
 	}
 
 	discordToken = token
-	channelID = channelID
 
 	// Load and validate config.json
 	cfg, err := loadConfig(*configPath)
@@ -888,6 +1193,32 @@ func main() {
 
 	if err := bot.Start(); err != nil {
 		log.Fatalf("Failed to start bot: %v", err)
+	}
+
+	// Start API server if enabled
+	if apiEnabled {
+		// Parse CORS origins
+		var corsOrigins []string
+		if apiCorsOrigins != "" {
+			corsOrigins = strings.Split(apiCorsOrigins, ",")
+			// Trim whitespace from each origin
+			for i, origin := range corsOrigins {
+				corsOrigins[i] = strings.TrimSpace(origin)
+			}
+		}
+
+		// Create API server
+		apiServer = api.NewServer(configManager, apiPort, apiBearerToken, corsOrigins, log.Default())
+
+		// Start API server in background (handles graceful shutdown on context cancellation)
+		ctx, cancel := context.WithCancel(context.Background())
+		apiServerCancel = cancel
+
+		go func() {
+			if err := apiServer.Start(ctx); err != nil {
+				log.Printf("API server error: %v", err)
+			}
+		}()
 	}
 
 	// Wait for shutdown signal
