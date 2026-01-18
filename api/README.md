@@ -238,10 +238,10 @@ Respects graceful shutdown. Client disconnect should not continue processing. Se
 ## Tradeoffs
 
 ### Memory vs Correctness (Rate Limiter Cleanup)
-**Cost:** sync.Pool with cleanup goroutine adds complexity
-**Benefit:** Prevents OOM from unbounded limiter map
+**Cost:** Inline cleanup scan on each request adds O(n) overhead
+**Benefit:** Prevents OOM from unbounded limiter map without background goroutine
 **Alternative:** Fixed-size LRU cache would reject legitimate clients
-**Decision:** sync.Pool with time-based expiration balances memory and correctness
+**Decision:** Inline per-request cleanup balances simplicity and memory safety
 
 ### Performance vs Simplicity (Deep Merge)
 **Cost:** Multiple JSON marshal/unmarshal cycles
