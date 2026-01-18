@@ -1,171 +1,329 @@
-# AC Bot REST API
+# API Package
 
-The `api` package provides a REST API for dynamic configuration management of the AC Discord Bot. It runs as a concurrent HTTP server alongside the Discord bot, sharing access to the same `ConfigManager`.
+REST API for dynamic configuration management of the AC Discord Bot. Provides HTTP endpoints for reading, updating, and validating bot configuration at runtime without restarting the service.
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                         main.go                             │
-│  ┌──────────────┐         ┌──────────────┐                 │
-│  │ Discord Bot  │         │ HTTP Server  │                 │
-│  │   (goroutine)│         │  (goroutine) │                 │
-│  └──────┬───────┘         └──────┬───────┘                 │
-│         │                        │                          │
-│         └────────────┬───────────┘                          │
-│                      │                                      │
-│              ┌───────▼────────┐                             │
-│              │ ConfigManager  │                             │
-│              │  (atomic.Value │                             │
-│              │   + RWMutex)   │                             │
-│              └───────┬────────┘                             │
-│                      │                                      │
-│              ┌───────▼────────┐                             │
-│              │  config.json   │                             │
-│              │  (file watch)  │                             │
-│              └────────────────┘                             │
-└─────────────────────────────────────────────────────────────┘
-```
-
-**Key insight**: The HTTP API and Discord bot are concurrent peers that both access ConfigManager. Neither owns the config - they are both clients. ConfigManager is the source of truth for thread-safe access.
-
-## Data Flow
+### Component Overview
 
 ```
-HTTP Request (PATCH /api/config)
-  │
-  ├─► SecurityHeaders middleware
-  │   └─► Set X-Content-Type-Options, X-Frame-Options, CSP headers
-  │
-  ├─► CORS middleware
-  │   └─► Validate Origin header (if present)
-  │       └─► Pass if allowed, return 403 if disallowed
-  │
-  ├─► Logger middleware
-  │   └─► Redact Authorization header, log request with duration
-  │
-  ├─► RateLimit middleware
-  │   └─► Check token bucket for client IP
-  │       └─► Pass if under limit, return 429 if exceeded
-  │
-  ├─► BearerAuth middleware
-  │   └─► Validate Authorization header
-  │       └─► Pass if valid, return 401 if invalid
-  │
-  ├─► Handler (PatchConfig)
-  │   ├─► Decode request body
-  │   ├─► Call ConfigManager.UpdateConfig()
-  │   │   ├─► 1. Read existing config from file
-  │   │   ├─► 2. Create backup: config.json.backup
-  │   │   ├─► 3. Merge partial update with existing config
-  │   │   ├─► 4. Validate merged config
-  │   │   ├─► 5. Atomic write: temp file + rename
-  │   │   └─► 6. Trigger config reload (mtime change)
-  │   └─► Write JSON response
-  │
-  └─► JSON Response
-      ├─► 200 OK with updated config
-      └─► 400/500 on error with details
+┌─────────────────────────────────────────────────────────────────┐
+│                         Bot Struct                              │
+│  ┌─────────────┐  ┌──────────────┐  ┌─────────────────────────┐│
+│  │ DiscordGo  │  │ConfigManager │  │   API Server (optional)  ││
+│  │   Session   │  │              │  │  ┌────────┐  ┌────────┐ ││
+│  └─────────────┘  └──────────────┘  │  │Middleware│  │Handlers│ ││
+│         │                 │          │  └────────┘  └────────┘ ││
+│         └─────────────────┼──────────┴─────────────────────────┘│
+│                           ▼                                       │
+│                    Shared State (RWMutex)                        │
+│                   - Current Config                               │
+│                   - Server IPs                                    │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-**Why this flow**: Each middleware layer is independently testable and can be composed. The backup-then-atomic-write pattern ensures bot never sees corrupted config.
+**Component relationships:**
+- Bot owns all dependencies (Discord session, ConfigManager, optional API server)
+- ConfigManager owns config state with RWMutex for concurrent access
+- API server shares ConfigManager reference with Discord bot
+- No global state - all dependencies injected via constructors
+
+**Data flow:**
+1. Bot.Start() launches Discord bot and optional API server concurrently
+2. API handlers call ConfigManager methods (GetConfig, UpdateConfig, WriteConfig)
+3. ConfigManager serializes writes with RWMutex, updates in-memory config
+4. Discord bot reads config via ConfigManager.GetConfig() (RLock)
+5. File watcher (ConfigManager) detects mtime changes, reloads with debounce
+
+### API Server Architecture
+
+```
+HTTP Request
+    │
+    ▼
+┌──────────────────────────────────────────────────────────┐
+│ Middleware Chain (order matters)                         │
+│  1. SecurityHeaders    - outermost (applies to all)     │
+│  2. CORS              - cross-origin checks              │
+│  3. Logger            - request logging                  │
+│  4. RateLimit         - throttling before expensive auth │
+│  5. BearerAuth        - innermost (token validation)     │
+└──────────────────────────────────────────────────────────┘
+    │
+    ▼
+┌──────────────────────────────────────────────────────────┐
+│ Route Handler (handlers.go)                              │
+│  - Context cancellation check                            │
+│  - Request size limit (1MB)                              │
+│  - JSON decode                                           │
+│  - ConfigManager method call                             │
+└──────────────────────────────────────────────────────────┘
+    │
+    ▼
+┌──────────────────────────────────────────────────────────┐
+│ ConfigManager (main.go)                                  │
+│  - RWMutex for concurrent access                         │
+│  - Deep merge for partial updates                        │
+│  - Atomic file write with backup rotation                │
+└──────────────────────────────────────────────────────────┘
+```
+
+## Middleware Layers
+
+### Security Headers (Outermost)
+Applied to all responses including errors. Prevents XSS, clickjacking, MIME sniffing.
+
+**Headers:**
+- `X-Content-Type-Options: nosniff` - Prevents MIME type sniffing
+- `X-Frame-Options: DENY` - Prevents clickjacking
+- `X-XSS-Protection: 1; mode=block` - XSS protection for legacy browsers
+- `Content-Security-Policy: default-src 'self'` - Restricts content sources
+- `Referrer-Policy: strict-origin-when-cross-origin` - Controls referrer information
+
+### CORS (Second Layer)
+Cross-Origin Resource Sharing checks before authentication.
+
+**Behavior:**
+- Empty origin list = no CORS headers (same-origin only)
+- `"*"` = allow all origins (development only)
+- Specific origins = strict allowlist validation
+- Rejects `"*"` combined with specific origins (ambiguous security policy)
+
+**Preflight requests:** Returns 204 No Content with allowed methods and headers.
+
+### Logger (Third Layer)
+Logs all requests with method, path, status code, and duration.
+
+**Redaction:** Authorization header replaced with `Bearer <redacted>` before logging.
+
+### Rate Limiting (Fourth Layer)
+Token bucket rate limiting per client IP before expensive authentication.
+
+**Algorithm:**
+- 10 requests/second default (configurable via `API_RATE_LIMIT` env var)
+- Burst of 20 default (configurable via `API_RATE_BURST` env var)
+- Per-IP limiters with 5-minute expiration
+- Health check `/health` bypasses rate limiting
+
+**IP extraction:**
+- Uses `RemoteAddr` by default
+- Extracts rightmost IP from `X-Forwarded-For` header (trusts last proxy, not client)
+- Prevents IP spoofing bypass attempts
+
+**Memory management:** Inline cleanup on each request removes limiters inactive for >5 minutes.
+
+### Bearer Authentication (Innermost)
+Validates OAuth2 Bearer tokens per RFC 6750.
+
+**Timing-safe comparison:** Uses `crypto/subtle.ConstantTimeCompare` to prevent timing attack vectors where attacker measures response time to guess token byte-by-byte.
+
+**Health check bypass:** `/health` endpoint requires no authentication.
+
+## Configuration Endpoints
+
+### GET /health
+Public health check endpoint. Returns 200 OK if API server is running.
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "service": "ac-bot-api"
+}
+```
+
+### GET /api/config
+Returns current bot configuration.
+
+**Authentication:** Required
+**Response:** Full config object
+
+### GET /api/config/servers
+Returns only the servers list from current configuration.
+
+**Authentication:** Required
+**Response:** Servers array
+
+### PATCH /api/config
+Applies partial configuration update (deep merge).
+
+**Authentication:** Required
+**Request body:** JSON with partial config fields
+**Response:** Updated full config
+
+**Merge behavior:**
+- Top-level fields: merged recursively
+- `servers` array: merge by server name (preserves existing servers)
+- New servers appended to array
+- Existing servers updated by matching name
+
+### PUT /api/config
+Replaces entire configuration.
+
+**Authentication:** Required
+**Request body:** JSON with complete config
+**Response:** Updated full config
+
+### POST /api/config/validate
+Validates configuration without applying it.
+
+**Authentication:** Required
+**Request body:** JSON config to validate
+**Response:**
+```json
+{
+  "valid": true,
+  "message": "Config JSON is valid (full validation requires ConfigManager type)"
+}
+```
 
 ## Invariants
 
-1. **Config consistency**: All config reads (Discord bot and HTTP API) see a complete, valid config via atomic.Value. Never partial state.
-2. **Validation uniformity**: API and file reload use identical validation logic (`validateConfigStructSafeRuntime`). No special cases.
-3. **Write atomicity**: Config file is never partially written. Temp file + rename ensures all-or-nothing updates.
-4. **Backup availability**: Every write creates a `.backup` file. Failed updates can be manually rolled back.
-5. **Goroutine independence**: HTTP server and Discord bot run in separate goroutines. Neither can block the other.
-6. **Mtime-based reload**: File writes trigger reload via modification time change (existing 30-second polling cycle).
+### Rate Limiter Cleanup
+Limiters expire after 5 minutes of inactivity. Inline cleanup on each request scans and removes stale entries. Prevents unbounded memory growth from IP spoofing attacks.
+
+### Atomic Write Guarantees
+Config writes use temp file + atomic rename. Either entire config written or nothing. Prevents partial writes on crash/power loss.
+
+### Backup Rotation
+Always maintains 3 backup versions:
+- `.backup` = most recent
+- `.backup.1` = second most recent
+- `.backup.2` = third most recent
+- `.backup.3` = oldest (deleted on rotation)
+
+Rotate before writing new backup (3→4 delete, 2→3, 1→2, current→1).
+
+### Request Size Limits
+All request bodies limited to 1MB maximum. Checked via `Content-Length` header before JSON decode. Returns 413 Payload Too Large if exceeded. Prevents memory exhaustion DoS.
+
+### Context Cancellation
+All handlers check `r.Context().Err()` before processing. Return 503 Service Unavailable if context cancelled (client disconnect or server shutdown). Respects graceful shutdown.
+
+### Config Consistency
+All servers in config must have IP field set to `config.ServerIP`. Enforced by `initializeServerIPs()` called after every config load. Required by HTTP query logic in Discord bot.
+
+## Design Decisions
+
+### Why Bot Struct with Dependency Injection
+Package-level globals (`apiServer`, `discordToken`) make testing impossible. Cannot inject mocks or test doubles. Lifecycle management is implicit. Bot struct encapsulates all dependencies, constructor injection enables tests with proper lifecycle control.
+
+### Why Shared ConfigManager
+Both Discord bot and API need access to current config. Duplicate copies would diverge on updates. RWMutex allows concurrent reads (Discord bot polls config) while serializing writes (API updates).
+
+### Why Debounce on File Reload
+Editors write config in multiple bursts (vim creates .swp, writes, deletes). Without debounce, each write triggers reload. 100ms debounce coalesces rapid writes into single reload.
+
+### Why touchConfigFile After Atomic Write
+File watcher uses mtime to detect changes. `atomicWrite()` uses temp file + rename. Some filesystems preserve mtime across rename. Explicit `Chtimes()` ensures reload triggers.
+
+### Why Timing-Safe Token Comparison
+String comparison short-circuits on first mismatch. Attacker measures response time to guess token byte-by-byte. `crypto/subtle.ConstantTimeCompare` eliminates timing side channel.
+
+### Why Trust Rightmost IP in X-Forwarded-For
+Leftmost IP is client (can be spoofed). Rightmost IP is last proxy (trusted). Extract rightmost IP for rate limiting. Prevents IP spoofing bypass where attacker rotates leftmost IPs.
+
+### Why 1MB Request Size Limit
+Unbounded payloads cause memory exhaustion. 1MB sufficient for config.json (typical <10KB). `Content-Length` check before allocation prevents DoS via huge payloads.
+
+### Why CORS Strict Allowlist
+Wildcard `"*"` allows any origin. Attacker can craft malicious pages. Strict allowlist with `"*"` special case for local dev. Prevents cross-origin attacks. Rejects `"*"` combined with specific origins (ambiguous security policy).
+
+### Why Middleware Chain Order
+Security headers outermost (applies to all responses even on error). CORS second (cross-origin checks before auth). Logger third (logs all requests). Rate limit fourth (throttling before expensive auth). Auth innermost (validates token only after other checks pass). Ensures efficient resource use and consistent security headers.
+
+### Why Context Cancellation in Handlers
+Respects graceful shutdown. Client disconnect should not continue processing. Server shutdown should not accept new work. Early return prevents wasted resources.
 
 ## Tradeoffs
 
-**Memory vs. simplicity**:
-- Full config duplicated during atomic swap (~1KB overhead)
-- Tradeoff accepted: Negligible memory cost eliminates complex partial update logic
+### Memory vs Correctness (Rate Limiter Cleanup)
+**Cost:** sync.Pool with cleanup goroutine adds complexity
+**Benefit:** Prevents OOM from unbounded limiter map
+**Alternative:** Fixed-size LRU cache would reject legitimate clients
+**Decision:** sync.Pool with time-based expiration balances memory and correctness
 
-**Port conflict flexibility vs. hardening**:
-- Configurable `API_PORT` via environment variable
-- Tradeoff accepted: Different deployment environments need runtime flexibility; container orchestration can enforce port restrictions
+### Performance vs Simplicity (Deep Merge)
+**Cost:** Multiple JSON marshal/unmarshal cycles
+**Benefit:** Works for arbitrary config structures without reflection
+**Alternative:** Type-safe merge for known fields would be faster but brittle
+**Decision:** Keep JSON-based merge but add special handling for server arrays
 
-**Bearer token simplicity vs. OAuth2 complexity**:
-- Static Bearer token (not full OAuth2 flow)
-- Tradeoff accepted: Bot runs in trusted network; full OAuth2 adds token refresh, revocation, and client credential management complexity
+### Testability vs Ceremony (DI Constructor)
+**Cost:** More boilerplate (Bot struct, constructors, injection)
+**Benefit:** Tests can inject mocks, control lifecycle
+**Alternative:** Globals with test reset functions
+**Decision:** DI is idiomatic Go, worth the ceremony for testability
 
-**Rate limiting per-IP vs. per-token**:
-- Token bucket per client IP
-- Tradeoff accepted: Multiple admins may share same token; IP-based limiting prevents single misconfigured client from DoSing the API
+### Security vs Usability (CORS Strict Mode)
+**Cost:** Require explicit origin allowlist
+**Benefit:** Prevents cross-origin attacks
+**Alternative:** Wildcard `"*"` with additional checks
+**Decision:** Security is default, opt-in for specific origins
 
-## Usage
+## Error Handling
 
-### Starting the API Server
-
-The API server is controlled by environment variables:
-
-```bash
-# .env file
-API_ENABLED=true
-API_PORT=8080
-API_BEARER_TOKEN=your-secure-token-here
-API_CORS_ORIGINS=https://example.com,https://app.com
+### Response Format
+All errors return JSON with consistent structure:
+```json
+{
+  "error": "Short error message",
+  "details": "Optional detailed explanation"
+}
 ```
 
-When `API_ENABLED=true`, the main bot automatically starts the HTTP server in a background goroutine.
+### Status Codes
+- `400 Bad Request` - Invalid JSON, missing fields, validation failure
+- `401 Unauthorized` - Missing or invalid Bearer token
+- `403 Forbidden` - Origin not in CORS allowlist
+- `413 Payload Too Large` - Request body exceeds 1MB limit
+- `429 Too Many Requests` - Rate limit exceeded
+- `500 Internal Server Error` - Server-side errors (CORS misconfiguration)
+- `503 Service Unavailable` - Request cancelled (context done)
 
-### API Endpoints
+## Security Considerations
 
-All endpoints (except `/health`) require Bearer token authentication:
+### Token Storage
+Bearer token read from `API_BEARER_TOKEN` environment variable. Never logged (redacted in middleware). Should be stored securely (e.g., Kubernetes secrets, Vault).
 
-```bash
-# Set your token
-export API_TOKEN="your-secure-token-here"
+### CORS Configuration
+Development: `"*"` wildcard for local testing
+Production: Explicit origin allowlist (e.g., `https://admin.example.com`)
+Never combine `"*"` with specific origins (ambiguous security policy)
 
-# Get current config
-curl -H "Authorization: Bearer $API_TOKEN" \
-  http://localhost:8080/api/config
+### Rate Limiting
+Default: 10 req/sec with burst of 20
+Per-IP limits prevent single-client DoS
+Memory-bounded via 5-minute expiration
+Health check bypasses rate limiting
 
-# Get servers only
-curl -H "Authorization: Bearer $API_TOKEN" \
-  http://localhost:8080/api/config/servers
+### Input Validation
+- JSON decode errors return 400 with specific message
+- Request size limited to 1MB before decode
+- Config validation happens in ConfigManager (non-fatal at runtime)
+- Context cancellation checked before processing
 
-# Partial update (PATCH)
-curl -X PATCH \
-  -H "Authorization: Bearer $API_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"update_interval": 120}' \
-  http://localhost:8080/api/config
+### Timing Attack Prevention
+Token comparison uses constant-time algorithm. Response time does not reveal token match position. Prevents byte-by-byte guessing attacks.
 
-# Full replacement (PUT)
-curl -X PUT \
-  -H "Authorization: Bearer $API_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d @config.json \
-  http://localhost:8080/api/config
+## Environment Variables
 
-# Validate without applying
-curl -X POST \
-  -H "Authorization: Bearer $API_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d @config.json \
-  http://localhost:8080/api/config/validate
+| Variable | Description | Default | Required |
+| -------- | ----------- | ------- | -------- |
+| `API_ENABLED` | Enable API server | `false` | No |
+| `API_PORT` | HTTP listen port | `8080` | If API_ENABLED |
+| `API_BEARER_TOKEN` | Bearer token for authentication | - | If API_ENABLED |
+| `API_CORS_ORIGINS` | Comma-separated CORS allowlist | - | No |
+| `API_RATE_LIMIT` | Requests per second per IP | `10` | No |
+| `API_RATE_BURST` | Burst size per IP | `20` | No |
 
-# Health check (no auth required)
-curl http://localhost:8080/health
-```
+## Graceful Shutdown
 
-## Testing
+1. Context cancellation signal received
+2. HTTP server calls `Shutdown()` with 30-second timeout
+3. In-flight requests allowed up to 30 seconds to complete
+4. No new requests accepted
+5. Handler goroutines complete
+6. Server exits cleanly
 
-The package includes comprehensive tests:
-
-- **Unit tests**: Middleware, handlers, response types
-- **Integration tests**: HTTP server lifecycle, graceful shutdown
-- **E2E tests**: Full request flows with real HTTP client
-
-```bash
-# Run all API tests
-go test -v ./api/...
-
-# Run only E2E tests
-go test -v ./api/... -run TestE2E
-```
+Handlers respect context cancellation by checking `r.Context().Err()` and returning early if cancelled.
