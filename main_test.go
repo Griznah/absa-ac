@@ -2605,4 +2605,3 @@ func TestStaticFileServer_MIMETypes(t *testing.T) {
 		})
 	}
 }
-
