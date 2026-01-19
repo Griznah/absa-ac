@@ -1,6 +1,7 @@
 package api
 
 import (
+	"crypto/subtle"
 	"log"
 	"net/http"
 	"strings"
@@ -78,14 +79,9 @@ func compareTokens(a, b string) bool {
 		return false
 	}
 
-	// Constant-time comparison
-	if len(a) != len(b) {
-		return false
-	}
-
-	// Use string equality which is timing-safe in Go for strings of equal length
-	// (Go strings are not compared byte-by-byte in a way that leaks timing info)
-	return a == b
+	// Use crypto/subtle.ConstantTimeCompare for constant-time comparison
+	// This prevents timing side-channel attacks
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
 
 // CSRFWithConfig creates CSRF middleware with custom configuration
