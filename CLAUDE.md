@@ -23,6 +23,7 @@ Discord bot for monitoring Assetto Corsa racing servers with dynamic configurati
 | --------- | ---- | ------------ |
 | `.github/` | GitHub Actions workflows for automated container builds | Setting up CI/CD, understanding release automation |
 | `plans/` | Working planning documents for executed features | Understanding implementation history, decision rationale for past changes |
+| `static/` | Alpine.js web UI for configuration management | Understanding frontend architecture, modifying UI, debugging web interface |
 
 ## Build
 

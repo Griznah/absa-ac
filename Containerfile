@@ -20,6 +20,7 @@ WORKDIR /app
 
 # Copy binary from builder
 COPY --from=builder /app/bot .
+COPY --chown=1001:1001 static ./static
 
 # Volume mount for config.json - host can edit configuration without container rebuild
 # Mount options:
