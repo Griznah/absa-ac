@@ -12,7 +12,7 @@ podman build -t ac-discordbot .
 
 ## Security
 
-This container runs as a non-root user (UID 1001) following container security best practices.
+This container runs as a non-root user (UID 1001) following container security best practices. At runtime, the application will immediately refuse to start if run as root (UID 0). It does not enforce config file/directory permissions at runtime. Make sure the absabot user (UID 1001) can read config.json; see troubleshooting below if startup fails on file access.
 
 ### User Details
 - **Username**: absabot
