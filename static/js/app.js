@@ -166,6 +166,19 @@ function app() {
             }, 100);
         },
 
+        getCSRFToken() {
+            const name = 'proxy_session=';
+            const decodedCookie = decodeURIComponent(document.cookie);
+            const cookies = decodedCookie.split(';');
+            for (let cookie of cookies) {
+                cookie = cookie.trim();
+                if (cookie.indexOf(name) === 0) {
+                    return cookie.substring(name.length);
+                }
+            }
+            return '';
+        },
+
         async apiRequest(method, url, data) {
             const options = {
                 method: method,
@@ -178,6 +191,13 @@ function app() {
                 options.body = JSON.stringify(data);
             }
 
+            if (method !== 'GET') {
+                const csrfToken = this.getCSRFToken();
+                if (csrfToken) {
+                    options.headers['X-CSRF-Token'] = csrfToken;
+                }
+            }
+
             const response = await fetch(url, options);
 
             if (response.status === 401) {
@@ -187,6 +207,11 @@ function app() {
                     this.pollingInterval = null;
                 }
                 throw new Error('Unauthorized - please login again');
+            }
+
+            if (response.status === 403) {
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(errorData.error || 'CSRF token validation failed');
             }
 
             if (!response.ok) {

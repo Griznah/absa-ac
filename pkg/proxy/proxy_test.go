@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -10,7 +11,15 @@ import (
 	"time"
 )
 
+func setupTestEnv(t *testing.T) {
+	t.Helper()
+	key := base64.StdEncoding.EncodeToString([]byte(strings.Repeat("x", 32)))
+	t.Setenv("SESSION_ENCRYPTION_KEY", key)
+}
+
 func TestProxyHandler_Normal_GET(t *testing.T) {
+	setupTestEnv(t)
+
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		auth := r.Header.Get("Authorization")
 		if auth != "Bearer test-token" {
@@ -46,7 +55,7 @@ func TestProxyHandler_Normal_GET(t *testing.T) {
 		t.Fatalf("Failed to create session: %v", err)
 	}
 
-	proxyHandler := AuthMiddleware(ProxyHandler(upstream.URL, store), store)
+	proxyHandler := AuthMiddleware(ProxyHandler(upstream.URL, store, 0), store)
 
 	req := httptest.NewRequest("GET", "/api/config?test=value", nil)
 	req.Header.Set("Cookie", "proxy_session="+session.ID)
@@ -73,6 +82,8 @@ func TestProxyHandler_Normal_GET(t *testing.T) {
 }
 
 func TestProxyHandler_Normal_POST(t *testing.T) {
+	setupTestEnv(t)
+
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		auth := r.Header.Get("Authorization")
 		if auth != "Bearer test-token" {
@@ -118,7 +129,7 @@ func TestProxyHandler_Normal_POST(t *testing.T) {
 		t.Fatalf("Failed to create session: %v", err)
 	}
 
-	proxyHandler := AuthMiddleware(ProxyHandler(upstream.URL, store), store)
+	proxyHandler := AuthMiddleware(ProxyHandler(upstream.URL, store, 0), store)
 
 	body := `{"key":"value"}`
 	req := httptest.NewRequest("POST", "/api/config", strings.NewReader(body))
@@ -147,6 +158,8 @@ func TestProxyHandler_Normal_POST(t *testing.T) {
 }
 
 func TestProxyHandler_Edge_LargeRequestBody(t *testing.T) {
+	setupTestEnv(t)
+
 	largeBody := strings.Repeat("a", 1024*1024)
 
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -176,7 +189,7 @@ func TestProxyHandler_Edge_LargeRequestBody(t *testing.T) {
 		t.Fatalf("Failed to create session: %v", err)
 	}
 
-	proxyHandler := AuthMiddleware(ProxyHandler(upstream.URL, store), store)
+	proxyHandler := AuthMiddleware(ProxyHandler(upstream.URL, store, 0), store)
 
 	req := httptest.NewRequest("POST", "/api/config", strings.NewReader(largeBody))
 	req.Header.Set("Cookie", "proxy_session="+session.ID)
@@ -193,6 +206,8 @@ func TestProxyHandler_Edge_LargeRequestBody(t *testing.T) {
 }
 
 func TestProxyHandler_Edge_SpecialCharactersInQuery(t *testing.T) {
+	setupTestEnv(t)
+
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		query := r.URL.Query()
 		if query.Get("key") != "value with spaces" {
@@ -220,7 +235,7 @@ func TestProxyHandler_Edge_SpecialCharactersInQuery(t *testing.T) {
 		t.Fatalf("Failed to create session: %v", err)
 	}
 
-	proxyHandler := AuthMiddleware(ProxyHandler(upstream.URL, store), store)
+	proxyHandler := AuthMiddleware(ProxyHandler(upstream.URL, store, 0), store)
 
 	req := httptest.NewRequest("GET", "/api/config?key=value+with+spaces&emoji=😀🚀", nil)
 	req.Header.Set("Cookie", "proxy_session="+session.ID)
@@ -237,6 +252,8 @@ func TestProxyHandler_Edge_SpecialCharactersInQuery(t *testing.T) {
 }
 
 func TestProxyHandler_Error_UpstreamUnreachable(t *testing.T) {
+	setupTestEnv(t)
+
 	store, err := NewSessionStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("Failed to create session store: %v", err)
@@ -248,7 +265,7 @@ func TestProxyHandler_Error_UpstreamUnreachable(t *testing.T) {
 		t.Fatalf("Failed to create session: %v", err)
 	}
 
-	proxyHandler := AuthMiddleware(ProxyHandler("http://localhost:9999", store), store)
+	proxyHandler := AuthMiddleware(ProxyHandler("http://localhost:9999", store, 0), store)
 
 	req := httptest.NewRequest("GET", "/api/config", nil)
 	req.Header.Set("Cookie", "proxy_session="+session.ID)
@@ -270,6 +287,8 @@ func TestProxyHandler_Error_UpstreamUnreachable(t *testing.T) {
 }
 
 func TestProxyHandler_Error_NoSession(t *testing.T) {
+	setupTestEnv(t)
+
 	store, err := NewSessionStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("Failed to create session store: %v", err)
@@ -281,7 +300,7 @@ func TestProxyHandler_Error_NoSession(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	proxyHandler := AuthMiddleware(ProxyHandler(upstream.URL, store), store)
+	proxyHandler := AuthMiddleware(ProxyHandler(upstream.URL, store, 0), store)
 
 	req := httptest.NewRequest("GET", "/api/config", nil)
 
@@ -297,6 +316,8 @@ func TestProxyHandler_Error_NoSession(t *testing.T) {
 }
 
 func TestProxyHandler_Error_UpstreamReturnsError(t *testing.T) {
+	setupTestEnv(t)
+
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusForbidden)
@@ -315,7 +336,7 @@ func TestProxyHandler_Error_UpstreamReturnsError(t *testing.T) {
 		t.Fatalf("Failed to create session: %v", err)
 	}
 
-	proxyHandler := AuthMiddleware(ProxyHandler(upstream.URL, store), store)
+	proxyHandler := AuthMiddleware(ProxyHandler(upstream.URL, store, 0), store)
 
 	req := httptest.NewRequest("GET", "/api/config", nil)
 	req.Header.Set("Cookie", "proxy_session="+session.ID)
@@ -342,6 +363,8 @@ func TestProxyHandler_Error_UpstreamReturnsError(t *testing.T) {
 }
 
 func TestProxyHandler_PathPreserved(t *testing.T) {
+	setupTestEnv(t)
+
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/config/servers" {
 			w.WriteHeader(http.StatusNotFound)
@@ -362,7 +385,7 @@ func TestProxyHandler_PathPreserved(t *testing.T) {
 		t.Fatalf("Failed to create session: %v", err)
 	}
 
-	proxyHandler := AuthMiddleware(ProxyHandler(upstream.URL, store), store)
+	proxyHandler := AuthMiddleware(ProxyHandler(upstream.URL, store, 0), store)
 
 	req := httptest.NewRequest("GET", "/api/config/servers", nil)
 	req.Header.Set("Cookie", "proxy_session="+session.ID)

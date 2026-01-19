@@ -556,4 +556,168 @@ test.describe('Alpine.js App Unit Tests', () => {
         expect(result.hasCsrfToken).toBe(false);
         expect(result.hasFetchCSRFToken).toBe(false);
     });
+
+    test('getCSRFToken extracts session cookie value', async ({ page }) => {
+        const result = await page.evaluate(() => {
+            document.cookie = 'proxy_session=test-session-123';
+            const appInstance = app();
+            const token = appInstance.getCSRFToken();
+            return {
+                token: token,
+                isEmpty: token === ''
+            };
+        });
+
+        expect(result.token).toBe('test-session-123');
+        expect(result.isEmpty).toBe(false);
+    });
+
+    test('getCSRFToken returns empty string when cookie not set', async ({ page }) => {
+        const result = await page.evaluate(() => {
+            document.cookie = '';
+            const appInstance = app();
+            return appInstance.getCSRFToken();
+        });
+
+        expect(result).toBe('');
+    });
+
+    test('apiRequest adds X-CSRF-Token header for POST', async ({ page }) => {
+        await page.evaluate(() => {
+            document.cookie = 'proxy_session=csrf-token-456';
+            window.requestHeaders = null;
+
+            const originalFetch = globalThis.fetch;
+            globalThis.fetch = async (url, options) => {
+                window.requestHeaders = options?.headers;
+                return {
+                    ok: true,
+                    status: 200,
+                    json: async () => ({ data: { server_ip: '192.168.1.1' } })
+                };
+            };
+        });
+
+        await page.evaluate(() => {
+            const appInstance = app();
+            appInstance.apiRequest('POST', '/proxy/api/config', { test: 'data' });
+        });
+
+        const result = await page.evaluate(() => {
+            return {
+                hasCsrfHeader: window.requestHeaders?.hasOwnProperty('X-CSRF-Token'),
+                csrfToken: window.requestHeaders?.['X-CSRF-Token']
+            };
+        });
+
+        expect(result.hasCsrfHeader).toBe(true);
+        expect(result.csrfToken).toBe('csrf-token-456');
+    });
+
+    test('apiRequest adds X-CSRF-Token header for PATCH', async ({ page }) => {
+        await page.evaluate(() => {
+            document.cookie = 'proxy_session=patch-token-789';
+            window.requestHeaders = null;
+
+            const originalFetch = globalThis.fetch;
+            globalThis.fetch = async (url, options) => {
+                window.requestHeaders = options?.headers;
+                return {
+                    ok: true,
+                    status: 200,
+                    json: async () => ({ data: { server_ip: '192.168.1.1' } })
+                };
+            };
+        });
+
+        await page.evaluate(() => {
+            const appInstance = app();
+            appInstance.apiRequest('PATCH', '/proxy/api/config', { update: 'me' });
+        });
+
+        const result = await page.evaluate(() => {
+            return {
+                csrfToken: window.requestHeaders?.['X-CSRF-Token']
+            };
+        });
+
+        expect(result.csrfToken).toBe('patch-token-789');
+    });
+
+    test('apiRequest does not add X-CSRF-Token for GET', async ({ page }) => {
+        await page.evaluate(() => {
+            document.cookie = 'proxy_session=get-token-999';
+            window.requestHeaders = null;
+
+            const originalFetch = globalThis.fetch;
+            globalThis.fetch = async (url, options) => {
+                window.requestHeaders = options?.headers;
+                return {
+                    ok: true,
+                    status: 200,
+                    json: async () => ({ data: { server_ip: '192.168.1.1' } })
+                };
+            };
+        });
+
+        await page.evaluate(() => {
+            const appInstance = app();
+            appInstance.apiRequest('GET', '/proxy/api/config');
+        });
+
+        const result = await page.evaluate(() => {
+            return {
+                hasCsrfHeader: window.requestHeaders?.hasOwnProperty('X-CSRF-Token')
+            };
+        });
+
+        expect(result.hasCsrfHeader).toBe(false);
+    });
+
+    test('apiRequest handles 403 Forbidden with CSRF error message', async ({ page }) => {
+        await page.evaluate(() => {
+            const originalFetch = globalThis.fetch;
+            globalThis.fetch = async (url, options) => {
+                return {
+                    ok: false,
+                    status: 403,
+                    json: async () => ({ error: 'forbidden: CSRF token mismatch' })
+                };
+            };
+        });
+
+        const error = await page.evaluate(async () => {
+            const appInstance = app();
+            try {
+                await appInstance.apiRequest('POST', '/proxy/api/config', { test: 'data' });
+                return null;
+            } catch (err) {
+                return err.message;
+            }
+        });
+
+        expect(error).toContain('CSRF token mismatch');
+    });
+
+    test('getCSRFToken handles URL-encoded cookie values', async ({ page }) => {
+        const result = await page.evaluate(() => {
+            document.cookie = 'proxy_session=encoded%20token%21%40%23';
+            const appInstance = app();
+            return appInstance.getCSRFToken();
+        });
+
+        expect(result).toBe('encoded token!@#');
+    });
+
+    test('getCSRFToken handles multiple cookies', async ({ page }) => {
+        const result = await page.evaluate(() => {
+            document.cookie = 'other_cookie=other_value';
+            document.cookie = 'proxy_session=correct-session-token';
+            document.cookie = 'another_cookie=another_value';
+            const appInstance = app();
+            return appInstance.getCSRFToken();
+        });
+
+        expect(result).toBe('correct-session-token');
+    });
 });

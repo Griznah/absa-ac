@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	upstreamTimeout = 10 * time.Second
+	defaultUpstreamTimeout = 10 * time.Second
 )
 
 var hopByHopHeaders = map[string]bool{
@@ -27,8 +27,13 @@ var hopByHopHeaders = map[string]bool{
 }
 
 // ProxyHandler forwards requests to the bot API with Bearer token from session
-// Extracts session from context, adds Bearer token, forwards request to upstream
-func ProxyHandler(botAPIURL string, store *SessionStore) http.Handler {
+// Extracts session from context, decrypts token on-demand, forwards request to upstream
+// upstreamTimeout: timeout for upstream API requests (0 uses default 10s)
+func ProxyHandler(botAPIURL string, store *SessionStore, upstreamTimeout time.Duration) http.Handler {
+	if upstreamTimeout == 0 {
+		upstreamTimeout = defaultUpstreamTimeout
+	}
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		session, ok := GetSession(r)
 		if !ok {
@@ -36,7 +41,15 @@ func ProxyHandler(botAPIURL string, store *SessionStore) http.Handler {
 			return
 		}
 
-		upstreamResp, err := forwardRequest(r, botAPIURL, session.Token)
+		// Decrypt token on-demand to minimize time in memory
+		token, err := store.GetToken(session.ID)
+		if err != nil {
+			log.Printf("Failed to get token for session %s: %v", session.ID, err)
+			http.Error(w, `{"error":"Unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+
+		upstreamResp, err := forwardRequest(r, botAPIURL, token, upstreamTimeout)
 		if err != nil {
 			log.Printf("Proxy error: %v", err)
 			http.Error(w, `{"error":"Service unavailable","details":"Failed to reach upstream API"}`, http.StatusServiceUnavailable)
@@ -55,8 +68,9 @@ func ProxyHandler(botAPIURL string, store *SessionStore) http.Handler {
 
 // forwardRequest creates upstream request with Bearer token and forwards it
 // Copies headers, body, query parameters from original request
-func forwardRequest(req *http.Request, botAPIURL string, bearerToken string) (*http.Response, error) {
-	ctx, cancel := context.WithTimeout(req.Context(), upstreamTimeout)
+// timeout: timeout for upstream request (configurable via PROXY_UPSTREAM_TIMEOUT env var)
+func forwardRequest(req *http.Request, botAPIURL string, bearerToken string, timeout time.Duration) (*http.Response, error) {
+	ctx, cancel := context.WithTimeout(req.Context(), timeout)
 	defer cancel()
 
 	upstreamURL := botAPIURL + req.URL.Path

@@ -134,3 +134,7 @@ cython_debug/
 bot
 absa-ac
 # Go
+# Session encryption key (auto-generated on first run)
+.session_key
+# Session storage directory
+sessions/

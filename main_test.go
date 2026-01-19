@@ -2517,7 +2517,7 @@ func TestProxyServer_Startup(t *testing.T) {
 	proxyPort = "13000"
 	globalStateMutex.Unlock()
 
-	if err := startProxyServer(bot, apiBearerToken); err != nil {
+	if err := startProxyServer(bot, apiBearerToken, false, 10*time.Second); err != nil {
 		t.Fatalf("startProxyServer failed: %v", err)
 	}
 
@@ -2693,7 +2693,7 @@ func TestProxyServer_PortInUse(t *testing.T) {
 	// Wait for any previous goroutines to finish reading proxyPort
 	time.Sleep(100 * time.Millisecond)
 
-	err = startProxyServer(bot, apiBearerToken)
+	err = startProxyServer(bot, apiBearerToken, false, 10*time.Second)
 
 	// startProxyServer launches server in goroutine, so it won't return error immediately
 	// The error will be logged in the goroutine, not returned
@@ -2788,7 +2788,7 @@ func TestProxyServer_SessionDirPermissions(t *testing.T) {
 	globalStateMutex.Lock()
 	proxyPort = "13002"
 	globalStateMutex.Unlock()
-	err := startProxyServer(bot, apiBearerToken)
+	err := startProxyServer(bot, apiBearerToken, false, 10*time.Second)
 
 	// Should fail because sessions is a file, not a directory
 	if err == nil {
@@ -2850,7 +2850,7 @@ func TestProxyServer_GracefulShutdown(t *testing.T) {
 	// Wait for any previous goroutines to finish reading proxyPort
 	time.Sleep(100 * time.Millisecond)
 
-	if err := startProxyServer(bot, apiBearerToken); err != nil {
+	if err := startProxyServer(bot, apiBearerToken, false, 10*time.Second); err != nil {
 		t.Fatalf("startProxyServer failed: %v", err)
 	}
 

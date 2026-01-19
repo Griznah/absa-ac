@@ -94,8 +94,9 @@ var (
 	apiCorsOrigins string
 
 	// Proxy configuration flags (read from environment)
-	proxyEnabled bool
-	proxyPort    string
+	proxyEnabled         bool
+	proxyPort            string
+	proxyUpstreamTimeout time.Duration
 )
 
 type Server struct {
@@ -1315,8 +1316,10 @@ func (b *Bot) checkForConfigUpdates() error {
 
 // startProxyServer initializes and starts the proxy server in a background goroutine
 // Creates session store, sets up routes, and starts HTTP server on configured port
+// useHTTPS: controls whether session cookies are marked Secure (true if behind HTTPS termination)
+// upstreamTimeout: timeout for upstream API requests (configurable via PROXY_UPSTREAM_TIMEOUT)
 // Returns error if session store creation or server startup fails
-func startProxyServer(bot *Bot, bearerToken string) error {
+func startProxyServer(bot *Bot, bearerToken string, useHTTPS bool, upstreamTimeout time.Duration) error {
 	// Create session store with file-based persistence
 	sessionsDir := "./sessions"
 	store, err := proxy.NewSessionStore(sessionsDir)
@@ -1332,11 +1335,11 @@ func startProxyServer(bot *Bot, bearerToken string) error {
 	mux := http.NewServeMux()
 
 	// Auth endpoints
-	mux.HandleFunc("/proxy/login", proxy.LoginHandler(store, botAPIURL))
-	mux.HandleFunc("/proxy/logout", proxy.LogoutHandler(store))
+	mux.HandleFunc("/proxy/login", proxy.LoginHandler(store, botAPIURL, useHTTPS, upstreamTimeout))
+	mux.HandleFunc("/proxy/logout", proxy.LogoutHandler(store, useHTTPS))
 
-	// Proxy API endpoints (authenticated)
-	proxyHandler := proxy.AuthMiddleware(proxy.ProxyHandler(botAPIURL, store), store)
+	// Proxy API endpoints (authenticated with CSRF)
+	proxyHandler := proxy.CSRFMiddleware(proxy.ProxyHandler(botAPIURL, store, upstreamTimeout), store)
 	mux.Handle("/proxy/api/", proxyHandler)
 
 	// Create HTTP server
@@ -1411,6 +1414,23 @@ func main() {
 	if proxyPort == "" {
 		proxyPort = "3000" // Default port
 	}
+	// Default to HTTPS for production security. Set PROXY_HTTPS=false to disable (not recommended).
+	proxyHTTPS := os.Getenv("PROXY_HTTPS") != "false"
+
+	// Parse upstream timeout (default 10 seconds, max 60 seconds)
+	const maxUpstreamTimeout = 60 * time.Second
+	if timeoutStr := os.Getenv("PROXY_UPSTREAM_TIMEOUT"); timeoutStr != "" {
+		var err error
+		proxyUpstreamTimeout, err = time.ParseDuration(timeoutStr)
+		if err != nil {
+			log.Fatalf("Invalid PROXY_UPSTREAM_TIMEOUT value '%s': %v", timeoutStr, err)
+		}
+		if proxyUpstreamTimeout > maxUpstreamTimeout {
+			log.Fatalf("PROXY_UPSTREAM_TIMEOUT exceeds maximum of %v", maxUpstreamTimeout)
+		}
+	} else {
+		proxyUpstreamTimeout = 10 * time.Second
+	}
 
 	// Validate proxy configuration if enabled
 	if proxyEnabled {
@@ -1420,7 +1440,11 @@ func main() {
 		if !apiEnabled {
 			log.Fatalf("PROXY_ENABLED=true but API_ENABLED=false (proxy requires bot API)")
 		}
-		log.Printf("Proxy server enabled on port %s", proxyPort)
+		httpsStatus := "HTTP"
+		if proxyHTTPS {
+			httpsStatus = "HTTPS"
+		}
+		log.Printf("Proxy server enabled on port %s (%s mode - cookies Secure=%v, upstream timeout=%v)", proxyPort, httpsStatus, proxyHTTPS, proxyUpstreamTimeout)
 	}
 
 	token, channelID, err := validateConfig()
@@ -1453,7 +1477,7 @@ func main() {
 
 	// Start proxy server if enabled
 	if proxyEnabled {
-		if err := startProxyServer(bot, apiBearerToken); err != nil {
+		if err := startProxyServer(bot, apiBearerToken, proxyHTTPS, proxyUpstreamTimeout); err != nil {
 			log.Printf("Failed to start proxy server: %v", err)
 			log.Println("Continuing without proxy server...")
 		}
