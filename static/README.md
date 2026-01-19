@@ -1,6 +1,6 @@
 # Static Frontend Architecture
 
-Web interface for managing AC Bot configuration using Alpine.js and the REST API.
+Web interface for managing AC Bot configuration using Alpine.js and session-based authentication.
 
 ## Architecture
 
@@ -11,22 +11,26 @@ Browser
          └───────────────────┴───────────────────┘
                              │
                              ▼
-                    sessionStorage (token)
+                    HTTP-only session cookie
                              │
                              │ HTTPS
                              ▼
 Go Container
-  API Handler (existing)
+  Proxy Handler (session-based auth)
+    - POST /proxy/login
+    - POST /proxy/logout
+    - GET/POST/PATCH /proxy/api/*
+  Bot API Handler (Bearer token auth)
     - GET /api/config
     - PATCH /api/config
     - POST /api/config/validate
-  Static File Server (new)
+  Static File Server
     - GET / -> index.html
     - GET /app.js -> static/js/app.js
     - GET /styles.css -> static/css/styles.css
 ```
 
-The frontend lives entirely within the Go container, served from `/static` at the root path. Alpine.js provides reactivity without a build step. API bearer tokens persist in sessionStorage (cleared on browser close). Static files and API endpoints share the same origin, eliminating CORS complexity.
+The frontend lives entirely within the Go container, served from `/static` at the root path. Alpine.js provides reactivity without a build step. Session authentication uses HTTP-only cookies (inaccessible to JavaScript XSS), eliminating Bearer token exposure in browser storage. Static files and API endpoints share the same origin, eliminating CORS complexity.
 
 ## Data Flow
 
@@ -36,11 +40,15 @@ User loads page
     ├─> Fetch static files from Go FileServer
     │   └─> Alpine.js initializes
     │
-    ├─> Check sessionStorage for API token
-    │   ├─> Found: Store in Alpine store
+    ├─> Check for session cookie
+    │   ├─> Found: Auto-login (skip auth modal)
     │   └─> Not found: Show login modal
     │
-    ├─> Fetch config from GET /api/config
+    ├─> User enters Bearer token (or auto-login)
+    │   └─> POST /proxy/login {token: "..."}
+    │       └─> Receive HTTP-only session cookie
+    │
+    ├─> Fetch config from GET /proxy/api/config
     │   └─> Alpine reactive state updated
     │
     ├─> User edits form field
@@ -48,13 +56,15 @@ User loads page
     │
     ├─> User clicks "Save"
     │   ├─> Validate inputs client-side
-    │   ├─> PATCH /api/config with changed fields only
+    │   ├─> PATCH /proxy/api/config with changed fields only
     │   ├─> On success: Refetch full config, clear dirty flag
     │   └─> On error: Display server validation message
     │
     └─> Auto-poll every 30s
-        └─> GET /api/config -> Update if remote changed
+        └─> GET /proxy/api/config -> Update if remote changed
 ```
+
+**Authentication flow**: User enters Bearer token ONCE during login. Frontend sends token to `/proxy/login`, backend validates against bot API, returns HTTP-only session cookie. Subsequent requests include cookie automatically (browser behavior). Backend validates session, adds Bearer token server-side, proxies to bot API. Bearer token never stored in frontend (sessionStorage/localStorage), eliminating XSS exposure risk.
 
 **State synchronization strategy**: Every PATCH triggers a full GET to ensure UI matches server truth. Polling runs at 30s intervals (matching bot's update_interval). When dirty flag is set (user has unsaved edits), polling updates skip config state to prevent data loss; instead, a warning indicator appears showing remote config changed.
 
@@ -81,7 +91,8 @@ User loads page
 ## Invariants
 
 - **Config consistency**: Every PATCH followed by full GET -> ensures UI matches server truth
-- **Token presence**: All API requests include Authorization header -> enforced by API client wrapper
+- **Session authentication**: All API requests include session cookie (automatic) -> backend validates and adds Bearer token server-side
+- **Bearer token isolation**: Token never stored in frontend -> HTTP-only cookie prevents JavaScript access
 - **Category validation**: Server category dropdown only shows valid categories -> prevents invalid submissions
 - **Port range**: Port input validates 1-65535 before sending -> fails fast on client side
 - **Non-empty required fields**: Client-side validation mirrors server rules -> reduces round-trips
@@ -94,16 +105,16 @@ User loads page
 | Alpine.js bundled locally | CSP compliant, self-contained, no network dependency | Must commit vendor file (~50KB) to repo |
 | Same container deployment | Simple ops, no CORS | Frontend updates require container rebuild |
 | 30s poll interval | Keeps UI in sync, minimal bandwidth | 30s max delay for concurrent edits |
-| Session storage token | Cleared on close (security) | User must re-enter token each browser session |
+| Session-based auth (HTTP-only cookie) | Bearer token not exposed to XSS, automatic cookie handling | Requires backend proxy implementation |
 | PATCH for edits | Smaller payloads, atomic merge | Must merge client-side before sending |
 
 ## Security Considerations
 
-**Token storage**: Session storage accessible via DevTools (documented risk). Recommend rotating tokens regularly. Tokens cleared on browser close (security) but persist across tab refreshes (UX).
+**Session-based authentication**: HTTP-only session cookie blocks JavaScript XSS access to Bearer token. Token stored server-side only. Session scoped to `/proxy` path with SameSite=Strict attribute. 4-hour session timeout balances security and UX.
 
-**XSS prevention**: Alpine.js auto-escapes HTML in text bindings. Server names and user input sanitized on display. Server-side validation exists (see `validateConfigStructSafeRuntime` in main.go).
+**XSS prevention**: Alpine.js auto-escapes HTML in text bindings. Server names and user input sanitized on display. Server-side validation exists (see `validateConfigStructSafeRuntime` in main.go). Bearer token never accessible via JavaScript (HTTP-only cookie).
 
-**CSP compliance**: Alpine.js bundled locally (not CDN) to maintain `default-src 'self'` policy without weakening security posture.
+**CSP compliance**: Alpine.js bundled locally (not CDN) to maintain `default-src 'self'` policy without weakening security posture. Session cookies use SameSite=Strict to prevent CSRF attacks.
 
 ## Dirty Flag State Machine
 

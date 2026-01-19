@@ -32,38 +32,54 @@ test.describe('Alpine.js App Unit Tests', () => {
         await page.addScriptTag({ path: appPath });
     });
 
-    test('login stores token in sessionStorage and Alpine store', async ({ page }) => {
+    test('login clears inputToken and calls /proxy/login', async ({ page }) => {
+        // Mock fetch to intercept login call
         await page.evaluate(() => {
-            const appInstance = app();
-            appInstance.inputToken = 'test-token-123';
-            appInstance.login();
+            window.loginCalled = false;
+            window.loginToken = null;
 
-            return {
-                storeToken: appInstance.token,
-                sessionToken: sessionStorage.getItem('apiToken')
+            // Override global fetch
+            const originalFetch = globalThis.fetch;
+            globalThis.fetch = async (url, options) => {
+                if (url === '/proxy/login' && options?.method === 'POST') {
+                    window.loginCalled = true;
+                    const body = JSON.parse(options.body);
+                    window.loginToken = body.token;
+                    return {
+                        ok: true,
+                        status: 200,
+                        json: async () => ({})
+                    };
+                }
+                // For other calls, return mock success
+                return {
+                    ok: true,
+                    status: 200,
+                    json: async () => ({ data: { server_ip: '192.168.1.1', update_interval: 30, category_order: [], category_emojis: {}, servers: [] } })
+                };
             };
         });
 
         const result = await page.evaluate(() => {
             const appInstance = app();
-            appInstance.inputToken = 'test-token-123';
+            appInstance.inputToken = 'test-bearer-token';
             appInstance.login();
+
             return {
-                storeToken: appInstance.token,
-                sessionToken: sessionStorage.getItem('apiToken'),
-                inputCleared: appInstance.inputToken === ''
+                inputCleared: appInstance.inputToken === '',
+                loginCalled: window.loginCalled,
+                loginToken: window.loginToken
             };
         });
 
-        expect(result.storeToken).toBe('test-token-123');
-        expect(result.sessionToken).toBe('test-token-123');
         expect(result.inputCleared).toBe(true);
+        expect(result.loginCalled).toBe(true);
+        expect(result.loginToken).toBe('test-bearer-token');
     });
 
     test('config watcher sets dirty flag on changes', async ({ page }) => {
         const result = await page.evaluate(() => {
             const appInstance = app();
-            appInstance.token = 'test-token';
             appInstance.config = {
                 server_ip: '192.168.1.1',
                 update_interval: 30,
@@ -232,7 +248,6 @@ test.describe('Alpine.js App Unit Tests', () => {
     test('polling backoff doubles on errors', async ({ page }) => {
         const result = await page.evaluate(() => {
             const appInstance = app();
-            appInstance.token = 'test-token';
 
             // Simulate error in fetchConfig
             const initialBackoff = appInstance.pollBackoffInterval;
@@ -250,7 +265,6 @@ test.describe('Alpine.js App Unit Tests', () => {
     test('polling backoff caps at 300s', async ({ page }) => {
         const result = await page.evaluate(() => {
             const appInstance = app();
-            appInstance.token = 'test-token';
             appInstance.pollBackoffInterval = 200000; // Already high
 
             appInstance.pollBackoffInterval = Math.min(appInstance.pollBackoffInterval * 2, 300000);
@@ -264,7 +278,6 @@ test.describe('Alpine.js App Unit Tests', () => {
     test('polling backoff resets on success', async ({ page }) => {
         const result = await page.evaluate(() => {
             const appInstance = app();
-            appInstance.token = 'test-token';
             appInstance.pollBackoffInterval = 120000; // Elevated backoff
 
             // Simulate success in fetchConfig
@@ -302,7 +315,6 @@ test.describe('Alpine.js App Unit Tests', () => {
     test('config update skipped when dirty is local', async ({ page }) => {
         const result = await page.evaluate(() => {
             const appInstance = app();
-            appInstance.token = 'test-token';
             appInstance.config = {
                 server_ip: '192.168.1.1',
                 update_interval: 30,
@@ -422,5 +434,126 @@ test.describe('Alpine.js App Unit Tests', () => {
         });
 
         expect(result).toBe(false);
+    });
+
+    test('login does not store token in sessionStorage', async ({ page }) => {
+        // Mock fetch for login
+        await page.evaluate(() => {
+            const originalFetch = globalThis.fetch;
+            globalThis.fetch = async (url, options) => {
+                if (url === '/proxy/login') {
+                    return {
+                        ok: true,
+                        status: 200,
+                        json: async () => ({})
+                    };
+                }
+                return {
+                    ok: true,
+                    status: 200,
+                    json: async () => ({ data: { server_ip: '192.168.1.1', update_interval: 30, category_order: [], category_emojis: {}, servers: [] } })
+                };
+            };
+        });
+
+        const result = await page.evaluate(() => {
+            const appInstance = app();
+            appInstance.inputToken = 'test-token-123';
+            appInstance.login();
+
+            return {
+                sessionToken: sessionStorage.getItem('apiToken'),
+                hasTokenProperty: 'token' in appInstance
+            };
+        });
+
+        expect(result.sessionToken).toBe(null);
+        expect(result.hasTokenProperty).toBe(false);
+    });
+
+    test('login sends POST to /proxy/login with token in body', async ({ page }) => {
+        await page.evaluate(() => {
+            window.requestUrl = null;
+            window.requestMethod = null;
+            window.requestBody = null;
+
+            const originalFetch = globalThis.fetch;
+            globalThis.fetch = async (url, options) => {
+                window.requestUrl = url;
+                window.requestMethod = options?.method;
+                window.requestBody = options?.body ? JSON.parse(options.body) : null;
+
+                return {
+                    ok: true,
+                    status: 200,
+                    json: async () => ({})
+                };
+            };
+        });
+
+        await page.evaluate(() => {
+            const appInstance = app();
+            appInstance.inputToken = 'my-bearer-token';
+            appInstance.login();
+        });
+
+        const result = await page.evaluate(() => {
+            return {
+                url: window.requestUrl,
+                method: window.requestMethod,
+                body: window.requestBody
+            };
+        });
+
+        expect(result.url).toBe('/proxy/login');
+        expect(result.method).toBe('POST');
+        expect(result.body).toEqual({ token: 'my-bearer-token' });
+    });
+
+    test('apiRequest uses /proxy prefix and no Authorization header', async ({ page }) => {
+        await page.evaluate(() => {
+            window.requestUrl = null;
+            window.requestHeaders = null;
+
+            const originalFetch = globalThis.fetch;
+            globalThis.fetch = async (url, options) => {
+                window.requestUrl = url;
+                window.requestHeaders = options?.headers;
+
+                return {
+                    ok: true,
+                    status: 200,
+                    json: async () => ({ data: { server_ip: '192.168.1.1', update_interval: 30, category_order: [], category_emojis: {}, servers: [] } })
+                };
+            };
+        });
+
+        await page.evaluate(() => {
+            const appInstance = app();
+            appInstance.apiRequest('GET', '/proxy/api/config');
+        });
+
+        const result = await page.evaluate(() => {
+            return {
+                url: window.requestUrl,
+                hasAuthHeader: window.requestHeaders?.hasOwnProperty('Authorization')
+            };
+        });
+
+        expect(result.url).toBe('/proxy/api/config');
+        expect(result.hasAuthHeader).toBe(false);
+    });
+
+    test('CSRF token property does not exist', async ({ page }) => {
+        const result = await page.evaluate(() => {
+            const appInstance = app();
+            return {
+                hasCsrfToken: 'csrfToken' in appInstance,
+                hasFetchCSRFToken: typeof appInstance.fetchCSRFToken === 'function'
+            };
+        });
+
+        expect(result.hasCsrfToken).toBe(false);
+        expect(result.hasFetchCSRFToken).toBe(false);
     });
 });

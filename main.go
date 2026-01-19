@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/bombom/absa-ac/api"
+	"github.com/bombom/absa-ac/pkg/proxy"
 	"github.com/bwmarrin/discordgo"
 )
 
@@ -91,6 +92,10 @@ var (
 	apiPort        string
 	apiBearerToken string
 	apiCorsOrigins string
+
+	// Proxy configuration flags (read from environment)
+	proxyEnabled bool
+	proxyPort    string
 )
 
 type Server struct {
@@ -712,6 +717,11 @@ type Bot struct {
 	// API server (optional - nil if disabled)
 	apiServer *api.Server
 	apiCancel context.CancelFunc
+
+	// Proxy server (optional - nil if disabled)
+	proxyServer *http.Server
+	proxyCancel context.CancelFunc
+	proxyStore  *proxy.SessionStore
 }
 
 // Config holds application configuration loaded from config.json
@@ -1257,6 +1267,21 @@ func (b *Bot) WaitForShutdown() {
 	<-sigchan
 	log.Println("Shutting down...")
 
+	// Stop proxy server if running
+	if b.proxyServer != nil && b.proxyCancel != nil {
+		log.Println("Stopping proxy server...")
+		b.proxyCancel()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := b.proxyServer.Shutdown(ctx); err != nil {
+			log.Printf("Error stopping proxy server: %v", err)
+		}
+		// Stop session cleanup
+		if b.proxyStore != nil {
+			b.proxyStore.StopBackgroundCleanup()
+		}
+	}
+
 	// Stop API server if running
 	if b.apiServer != nil && b.apiCancel != nil {
 		log.Println("Stopping API server...")
@@ -1284,6 +1309,54 @@ func (b *Bot) checkForConfigUpdates() error {
 		return nil
 	}
 	return b.configManager.checkAndReloadIfNeeded()
+}
+
+// ================= PROXY SERVER =================
+
+// startProxyServer initializes and starts the proxy server in a background goroutine
+// Creates session store, sets up routes, and starts HTTP server on configured port
+// Returns error if session store creation or server startup fails
+func startProxyServer(bot *Bot, bearerToken string) error {
+	// Create session store with file-based persistence
+	sessionsDir := "./sessions"
+	store, err := proxy.NewSessionStore(sessionsDir)
+	if err != nil {
+		return fmt.Errorf("failed to create session store: %w", err)
+	}
+	bot.proxyStore = store
+
+	// Build bot API URL for proxy upstream
+	botAPIURL := fmt.Sprintf("http://localhost:%s", apiPort)
+
+	// Setup proxy routes
+	mux := http.NewServeMux()
+
+	// Auth endpoints
+	mux.HandleFunc("/proxy/login", proxy.LoginHandler(store, botAPIURL))
+	mux.HandleFunc("/proxy/logout", proxy.LogoutHandler(store))
+
+	// Proxy API endpoints (authenticated)
+	proxyHandler := proxy.AuthMiddleware(proxy.ProxyHandler(botAPIURL, store), store)
+	mux.Handle("/proxy/api/", proxyHandler)
+
+	// Create HTTP server
+	bot.proxyServer = &http.Server{
+		Addr:    ":" + proxyPort,
+		Handler: mux,
+	}
+
+	// Start server in background goroutine
+	bot.proxyCancel = func() {}
+
+	go func() {
+		log.Printf("Proxy server listening on port %s", proxyPort)
+		if err := bot.proxyServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Printf("Proxy server error: %v", err)
+		}
+	}()
+
+	log.Printf("Proxy server started on port %s", proxyPort)
+	return nil
 }
 
 // ================= MAIN =================
@@ -1332,6 +1405,24 @@ func main() {
 		log.Printf("API server enabled on port %s with CORS origins: %s", apiPort, apiCorsOrigins)
 	}
 
+	// Read proxy configuration from environment
+	proxyEnabled = os.Getenv("PROXY_ENABLED") == "true"
+	proxyPort = os.Getenv("PROXY_PORT")
+	if proxyPort == "" {
+		proxyPort = "3000" // Default port
+	}
+
+	// Validate proxy configuration if enabled
+	if proxyEnabled {
+		if apiBearerToken == "" {
+			log.Fatalf("PROXY_ENABLED=true but API_BEARER_TOKEN is not set (proxy uses same token)")
+		}
+		if !apiEnabled {
+			log.Fatalf("PROXY_ENABLED=true but API_ENABLED=false (proxy requires bot API)")
+		}
+		log.Printf("Proxy server enabled on port %s", proxyPort)
+	}
+
 	token, channelID, err := validateConfig()
 	if err != nil {
 		log.Fatalf("Configuration error: %v", err)
@@ -1358,6 +1449,14 @@ func main() {
 
 	if err := bot.Start(); err != nil {
 		log.Fatalf("Failed to start bot: %v", err)
+	}
+
+	// Start proxy server if enabled
+	if proxyEnabled {
+		if err := startProxyServer(bot, apiBearerToken); err != nil {
+			log.Printf("Failed to start proxy server: %v", err)
+			log.Println("Continuing without proxy server...")
+		}
 	}
 
 	// Wait for shutdown signal
