@@ -160,11 +160,46 @@ func (m *e2eConfigManager) UpdateConfig(partial map[string]interface{}) error {
 	return m.WriteConfigAny(current)
 }
 
+// fetchCSRFToken retrieves the CSRF token from the API
+func fetchCSRFToken(t *testing.T, client *http.Client, baseURL string) string {
+	req, err := http.NewRequest("GET", baseURL+"/api/csrf-token", nil)
+	if err != nil {
+		t.Fatalf("Failed to create CSRF token request: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer e2e-test-token")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("Failed to fetch CSRF token: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("Expected status 200 for CSRF token, got %d: %s", resp.StatusCode, string(body))
+	}
+
+	var tokenResponse map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&tokenResponse); err != nil {
+		t.Fatalf("Failed to decode CSRF token response: %v", err)
+	}
+
+	csrfToken, ok := tokenResponse["csrf_token"].(string)
+	if !ok || csrfToken == "" {
+		t.Fatalf("CSRF token not found in response")
+	}
+
+	return csrfToken
+}
+
 // TestE2E_ConfigUpdateFlow tests the full config update flow
 func TestE2E_ConfigUpdateFlow(t *testing.T) {
 	initialConfig := generateConfig(3)
 	client, baseURL, cleanup := setupTestEnvironment(t, initialConfig)
 	defer cleanup()
+
+	// Fetch CSRF token for state-changing requests
+	csrfToken := fetchCSRFToken(t, client, baseURL)
 
 	// Send PATCH request to update update_interval
 	patchData := map[string]interface{}{
@@ -178,6 +213,7 @@ func TestE2E_ConfigUpdateFlow(t *testing.T) {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer e2e-test-token")
+	req.Header.Set("X-CSRF-Token", csrfToken)
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -242,6 +278,9 @@ func TestE2E_UnicodeConfig(t *testing.T) {
 	client, baseURL, cleanup := setupTestEnvironment(t, unicodeConfig)
 	defer cleanup()
 
+	// Fetch CSRF token for state-changing requests
+	csrfToken := fetchCSRFToken(t, client, baseURL)
+
 	// Send PUT request to update config
 	jsonData, _ := json.Marshal(unicodeConfig)
 
@@ -251,6 +290,7 @@ func TestE2E_UnicodeConfig(t *testing.T) {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer e2e-test-token")
+	req.Header.Set("X-CSRF-Token", csrfToken)
 
 	resp, err := client.Do(req)
 	if err != nil {

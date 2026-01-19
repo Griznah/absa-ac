@@ -3,6 +3,7 @@ function app() {
     return {
         token: null,
         inputToken: '',
+        csrfToken: null,
         config: {
             server_ip: '',
             update_interval: 30,
@@ -22,8 +23,10 @@ function app() {
             const storedToken = sessionStorage.getItem('apiToken');
             if (storedToken) {
                 this.token = storedToken;
-                this.fetchConfig();
-                this.startPolling();
+                this.fetchCSRFToken().then(() => {
+                    this.fetchConfig();
+                    this.startPolling();
+                });
             }
 
             this.$watch('config', () => {
@@ -39,8 +42,20 @@ function app() {
                 this.token = this.inputToken.trim();
                 sessionStorage.setItem('apiToken', this.token);
                 this.inputToken = '';
-                this.fetchConfig();
-                this.startPolling();
+                this.fetchCSRFToken().then(() => {
+                    this.fetchConfig();
+                    this.startPolling();
+                });
+            }
+        },
+
+        async fetchCSRFToken() {
+            try {
+                const response = await this.apiRequest('GET', '/api/csrf-token');
+                this.csrfToken = response.csrf_token;
+            } catch (err) {
+                this.error = 'Failed to fetch CSRF token: ' + err.message;
+                throw err;
             }
         },
 
@@ -152,6 +167,15 @@ function app() {
                 }
             };
 
+            // Add CSRF token for state-changing methods (PATCH, PUT, POST, DELETE)
+            const stateChangingMethods = ['PATCH', 'PUT', 'POST', 'DELETE'];
+            if (stateChangingMethods.includes(method)) {
+                if (!this.csrfToken) {
+                    throw new Error('CSRF token not loaded. Refresh the page.');
+                }
+                options.headers['X-CSRF-Token'] = this.csrfToken;
+            }
+
             if (data) {
                 options.body = JSON.stringify(data);
             }
@@ -166,6 +190,24 @@ function app() {
                     this.pollingInterval = null;
                 }
                 throw new Error('Unauthorized - please login again');
+            }
+
+            // Handle 403 Forbidden (could be CSRF validation failure)
+            if (response.status === 403) {
+                const errorData = await response.json().catch(() => ({}));
+                if (errorData.error && errorData.error.includes('CSRF')) {
+                    // CSRF token invalid - fetch new token and retry
+                    await this.fetchCSRFToken();
+                    // Retry the original request with new CSRF token
+                    options.headers['X-CSRF-Token'] = this.csrfToken;
+                    const retryResponse = await fetch(url, options);
+                    if (!retryResponse.ok) {
+                        const retryErrorData = await retryResponse.json().catch(() => ({}));
+                        throw new Error(retryErrorData.error || retryErrorData.details || 'Request failed after retry');
+                    }
+                    return retryResponse.json().then(data => data.data);
+                }
+                throw new Error(errorData.error || errorData.details || 'Request failed');
             }
 
             if (!response.ok) {
