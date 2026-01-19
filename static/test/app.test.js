@@ -4,6 +4,8 @@
  */
 
 const { test, expect } = require('@playwright/test');
+const fs = require('fs');
+const path = require('path');
 
 // Mock fetch for isolated testing
 function createMockFetch(responseData, status = 200) {
@@ -22,8 +24,13 @@ function createMockFetch(responseData, status = 200) {
 test.describe('Alpine.js App Unit Tests', () => {
 
     test.beforeEach(async ({ page }) => {
-        // Mock fetch globally for each test
-        await page.goto('data:text/html,<html><body><script src="/js/alpine.min.js"></script><script src="/js/app.js"></script></body></html>');
+        // Load Alpine.js and app.js using addScriptTag to bypass data: URL restrictions
+        const alpinePath = path.join(__dirname, '..', 'js', 'alpine.min.js');
+        const appPath = path.join(__dirname, '..', 'js', 'app.js');
+
+        await page.goto('data:text/html,<html><body></body></html>');
+        await page.addScriptTag({ path: alpinePath });
+        await page.addScriptTag({ path: appPath });
     });
 
     test('login stores token in sessionStorage and Alpine store', async ({ page }) => {
@@ -273,7 +280,6 @@ test.describe('Alpine.js App Unit Tests', () => {
     test('dirty flag state transitions', async ({ page }) => {
         const transitions = [
             { from: false, to: 'local', description: 'clean -> local on edit' },
-            { from: 'remote', to: 'local', description: 'remote -> local on edit' },
             { from: 'local', to: 'local', description: 'local stays local on edit' }
         ];
 
@@ -283,7 +289,7 @@ test.describe('Alpine.js App Unit Tests', () => {
                 appInstance.dirty = fromState;
 
                 // Simulate watcher logic
-                if (appInstance.dirty === false || appInstance.dirty === 'remote') {
+                if (appInstance.dirty === false) {
                     appInstance.dirty = 'local';
                 }
 
@@ -320,7 +326,7 @@ test.describe('Alpine.js App Unit Tests', () => {
 
             if (appInstance.dirty === false) {
                 appInstance.config = mockResponse;
-                appInstance.dirty = 'remote';
+                // Keep dirty=false (clean) after fetching - allows future polling updates
             } else if (appInstance.dirty === 'local') {
                 appInstance.remoteChanged = true;
             }
@@ -347,7 +353,7 @@ test.describe('Alpine.js App Unit Tests', () => {
             // Simulate apiRequest unwrapping logic
             const mockResponse = { data: data };
             return mockResponse.data;
-        }, JSON.stringify(mockData));
+        }, mockData);
 
         expect(result.server_ip).toBe('192.168.1.100');
     });
