@@ -4,7 +4,6 @@
  */
 
 const { test, expect } = require('@playwright/test');
-const fs = require('fs');
 const path = require('path');
 
 // Mock fetch for isolated testing
