@@ -16,6 +16,8 @@ import (
 // BearerAuth validates Bearer token authentication
 // Returns 401 Unauthorized if token is missing or invalid
 // Follows RFC 6750 OAuth2 Bearer Token specification
+// Note: /health endpoint bypasses auth (public monitoring endpoint)
+// but rate limiting still applies to prevent DoS
 func BearerAuth(token string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -54,6 +56,7 @@ func BearerAuth(token string) func(http.Handler) http.Handler {
 
 // RateLimit implements token bucket rate limiting per client IP
 // Prevents DoS attacks by limiting request frequency
+// Applies to ALL endpoints including /health (prevents health check DoS)
 // requestsPerSecond: steady-state rate limit
 // burstSize: maximum burst size for bursty traffic
 func RateLimit(requestsPerSecond int, burstSize int) func(http.Handler) http.Handler {
@@ -68,12 +71,6 @@ func RateLimit(requestsPerSecond int, burstSize int) func(http.Handler) http.Han
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Health check bypasses rate limiting
-			if r.URL.Path == "/health" {
-				next.ServeHTTP(w, r)
-				return
-			}
-
 			// Extract client IP (strip port to make limiter per-IP not per-connection)
 			clientIP := r.RemoteAddr
 			// Parse host:port format to extract just the IP address

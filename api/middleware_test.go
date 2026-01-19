@@ -173,6 +173,41 @@ func TestRateLimit_RecoveryAfterWait(t *testing.T) {
 	}
 }
 
+func TestRateLimit_HealthCheckIsRateLimited(t *testing.T) {
+	// Security: Health check bypasses auth but MUST be rate limited to prevent DoS
+	// This test verifies that /health endpoint is subject to rate limiting
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	// Very strict rate limit for health check (1 req/sec, burst of 1)
+	middleware := RateLimit(1, 1)
+	wrapped := middleware(handler)
+
+	req := httptest.NewRequest("GET", "/health", nil)
+	req.RemoteAddr = "127.0.0.1:9999"
+
+	// First request should succeed
+	rec := httptest.NewRecorder()
+	wrapped.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("First health check request failed with status %d, want 200", rec.Code)
+	}
+
+	// Immediate second request should be rate limited
+	rec2 := httptest.NewRecorder()
+	wrapped.ServeHTTP(rec2, req)
+	if rec2.Code != http.StatusTooManyRequests {
+		t.Errorf("Second health check request should be rate limited (429), got status %d", rec2.Code)
+	}
+
+	// Verify error message mentions rate limiting
+	body := rec2.Body.String()
+	if !strings.Contains(body, "Rate limit exceeded") && !strings.Contains(body, "rate limit") {
+		t.Errorf("Rate limit error message not found in response body: %s", body)
+	}
+}
+
 func TestLogger(t *testing.T) {
 	logger := log.New(os.Stdout, "TEST: ", log.LstdFlags)
 
