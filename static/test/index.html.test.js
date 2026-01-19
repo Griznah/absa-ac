@@ -99,9 +99,9 @@
   const categoryInputs = document.querySelectorAll('.category-item');
   console.log('✓ Category inputs:', categoryInputs.length > 0);
 
-  // Test 12: Servers section exists
+  // Test 11: Servers section exists
   const serverItems = document.querySelectorAll('.server-item');
-  console.log('✓ Server items:', serverItems.length >= 0);
+  console.log('✓ Server items:', serverItems.length > 0);
 
   // Test 13: Save button exists
   const saveButton = document.querySelector('button[\\@click="save()"], button[\\@click="save"]');
