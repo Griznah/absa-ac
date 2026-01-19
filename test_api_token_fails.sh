@@ -30,7 +30,7 @@ for tok in "${weak_tokens[@]}"; do
   echo "[test] API_BEARER_TOKEN=<$tok>"
   API_ENABLED=true API_BEARER_TOKEN="$tok" API_PORT=9099 \
     DISCORD_TOKEN="$dummy_token" CHANNEL_ID="$dummy_channel" \
-    "$BIN" -c "$CONFIG" >out.log 2>&1
+    "$BIN" -c "$CONFIG" >out.log 2>&1 || true
   code=$?
   if [[ $code -eq 0 ]]; then
     echo "[FAIL] Process exited with code 0 (should fail for weak token: '$tok')"

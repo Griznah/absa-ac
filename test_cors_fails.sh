@@ -30,7 +30,7 @@ ret=0
 # Test 1: Prod mode + '*' only => must fail
 API_ENABLED=true API_BEARER_TOKEN="$API_BEARER_TOKEN" API_CORS_ORIGINS="*" ALLOW_CORS_ANY=false \
   DISCORD_TOKEN="$dummy_token" CHANNEL_ID="$dummy_channel" \
-  "$BIN" -c "$CONFIG" >out.log 2>&1
+  "$BIN" -c "$CONFIG" >out.log 2>&1 || true
 code=$?
 echo "[test] '*' only, prod mode, exit code: $code"
 if [[ $code -eq 0 ]]; then
@@ -53,7 +53,7 @@ if [[ $code -ne 0 ]]; then
   echo "[FAIL] Bot failed to start with '*' and ALLOW_CORS_ANY=true (should allow in dev mode!)"
   cat out.log
   ret=1
-elif ! grep -q "[WARNING] ALLOW_CORS_ANY=true" out.log; then
+elif ! grep -Fq "[WARNING] ALLOW_CORS_ANY=true" out.log; then
   echo "[FAIL] Did not log bold warning for dev flag."
   cat out.log
   ret=1

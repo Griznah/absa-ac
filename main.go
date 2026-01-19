@@ -85,7 +85,8 @@ type redactingWriter struct{ underlying io.Writer }
 
 func (rw *redactingWriter) Write(p []byte) (int, error) {
 	redacted := RedactSecrets(string(p))
-	return rw.underlying.Write([]byte(redacted))
+	_, err := rw.underlying.Write([]byte(redacted))
+	return len(p), err
 }
 
 // Call this at program start: makes all log.Print log.Printf secrets-safe
@@ -1394,7 +1395,7 @@ func checkFilePerm(path string, want os.FileMode, require bool) {
 	if mode != want {
 		msg := fmt.Sprintf("SECURITY: %s permissions %o (want %o)", path, mode, want)
 		if require {
-			log.Fatalf(msg)
+			log.Fatalf("%s", msg)
 		} else {
 			log.Printf("[WARNING] %s", msg)
 		}
