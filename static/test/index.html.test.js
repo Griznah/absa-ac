@@ -84,15 +84,15 @@
   console.log('✓ Login modal exists:', loginModal !== null);
 
   // Test 8: Main form container exists
-  const mainContainer = document.querySelector('.container');
+  const mainContainer = document.querySelector('div.container[x-show="token"]');
   console.log('✓ Main container exists:', mainContainer !== null);
 
   // Test 9: Global settings section exists
-  const globalSection = document.querySelector('section');
+  const globalSection = document.querySelector('section:first-of-type');
   console.log('✓ Global settings section:', globalSection !== null);
 
   // Test 10: Server IP input exists
-  const serverIpInput = document.querySelector('input[x-model*="server_ip"]');
+  const serverIpInput = document.querySelector('input[x-model="config.server_ip"]');
   console.log('✓ Server IP input:', serverIpInput !== null);
 
   // Test 11: Categories section exists
