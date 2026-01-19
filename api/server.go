@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"mime"
 	"net/http"
 	"os"
 	"strconv"
@@ -74,6 +75,10 @@ func NewServer(cm ConfigManager, port string, bearerToken string, corsOrigins []
 // Blocks until the context is cancelled, then initiates graceful shutdown
 // Returns error if server fails to start (listen errors)
 func (s *Server) Start(ctx context.Context) error {
+	// MIME type configuration for .mjs module files (ES modules)
+	// Required for browsers to properly handle JavaScript modules
+	mime.AddExtensionType(".mjs", "application/javascript")
+
 	// Set up router with middleware
 	mux := http.NewServeMux()
 

@@ -7,7 +7,6 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"mime"
 	"net/http"
 	"os"
 	"os/signal"
@@ -1315,14 +1314,6 @@ func main() {
 	if err := loadEnv(); err != nil {
 		log.Printf("Warning: %v", err)
 	}
-
-	// MIME type configuration for .mjs module files
-	mime.AddExtensionType(".mjs", "application/javascript")
-
-	// FileServer at root path serves static files.
-	// Go's ServeMux pattern matching order: longer patterns (/api/*) match before shorter patterns (/).
-	fs := http.FileServer(http.Dir("./static"))
-	http.Handle("/", fs)
 
 	// Read API configuration from environment
 	apiEnabled = os.Getenv("API_ENABLED") == "true"
