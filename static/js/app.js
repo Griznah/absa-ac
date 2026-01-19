@@ -30,7 +30,7 @@ function app() {
             }
 
             this.$watch('config', () => {
-                if (this.dirty === false || this.dirty === 'remote') {
+                if (this.dirty === false) {
                     this.dirty = 'local';
                 }
                 this.saved = false;
@@ -66,7 +66,7 @@ function app() {
                 // Note: apiRequest unwraps response.data, so response is already the data object
                 if (this.dirty === false) {
                     this.config = response;
-                    this.dirty = 'remote';
+                    // Keep dirty=false (clean) after fetching - allows future polling updates
                 } else if (this.dirty === 'local') {
                     // Remote changed while user is editing - show warning indicator
                     this.remoteChanged = true;
