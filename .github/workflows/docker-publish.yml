@@ -10,8 +10,58 @@ permissions:
   packages: write
 
 jobs:
+  secretscan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Run truffleHog secrets scan
+        uses: trufflesecurity/trufflehog@v3.72.0
+        with:
+          scanArguments: "--regex --entropy=False --fail --max-depth=50 ."
+
+  govulncheck:
+    runs-on: ubuntu-latest
+    needs: secretscan
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Run govulncheck (Go dependency vulnerability scan)
+        uses: golang/govulncheck-action@v1
+        with:
+          go-version-input: 1.20.6
+          go-package: ./...
+          output-format: text
+
+  image-test:
+    runs-on: ubuntu-latest
+    needs: govulncheck
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build image (local cache only)
+        id: build-local
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          tags: ac-discordbot:test
+      - name: Run container and check UID/GID
+        run: |
+          docker run --rm --entrypoint id ac-discordbot:test -u
+          uid=$(docker run --rm --entrypoint id ac-discordbot:test -u)
+          gid=$(docker run --rm --entrypoint id ac-discordbot:test -g)
+          if [ "$uid" != "1001" ] || [ "$gid" != "1001" ]; then
+            echo "FATAL: Container runs as $uid:$gid, expected 1001:1001" >&2
+            exit 1
+          fi
+          echo "PASS: Container runs as non-root $uid:$gid"
+
   build-and-push:
     runs-on: ubuntu-latest
+    needs: [govulncheck, image-test]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

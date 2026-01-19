@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -20,6 +22,76 @@ import (
 	"github.com/bombom/absa-ac/api"
 	"github.com/bwmarrin/discordgo"
 )
+
+// ================= SECURITY: STRONG TOKEN ENFORCEMENT =================
+// isStrongToken returns true if token meets strength requirements for REST API auth
+// - At least 32 chars
+// - Not a default/demo/test value
+// - Not all the same character
+func isStrongToken(token string) bool {
+	if len(token) < 32 {
+		return false
+	}
+	lowers := []string{"changeme-required", "changeme", "test", "token", "example", "123456", strings.Repeat("a", len(token)), strings.Repeat("1", len(token))}
+	t := strings.ToLower(token)
+	for _, lw := range lowers {
+		if t == lw {
+			return false
+		}
+	}
+	allSame := true
+	for i := range token {
+		if token[i] != token[0] {
+			allSame = false
+			break
+		}
+	}
+	if allSame {
+		return false
+	}
+	return true
+}
+
+// ================= SECRET REDACTION =================
+// RedactSecrets replaces secrets/patterns in logs with [REDACTED]
+func RedactSecrets(s string) string {
+	patterns := []string{
+		`(?i)(api[_-]?key|token|secret|bearer)["'=: ]+([a-zA-Z0-9\-_.:]+)`, // API_KEY=xxx, Bearer ...
+		`(?i)(password)["'=: ]+([a-zA-Z0-9\-_.:]+)`,                        // password fields
+	}
+	for _, pat := range patterns {
+		re := regexp.MustCompile(pat)
+		s = re.ReplaceAllStringFunc(s, func(m string) string {
+			// Only redact value part, not the key
+			parts := strings.SplitN(m, "=", 2)
+			if len(parts) == 2 {
+				return parts[0] + "=[REDACTED]"
+			}
+			colon := strings.SplitN(m, ":", 2)
+			if len(colon) == 2 {
+				return colon[0] + ": [REDACTED]"
+			}
+			space := strings.SplitN(m, " ", 2)
+			if len(space) == 2 {
+				return space[0] + " [REDACTED]"
+			}
+			return "[REDACTED]"
+		})
+	}
+	return s
+}
+
+type redactingWriter struct{ underlying io.Writer }
+
+func (rw *redactingWriter) Write(p []byte) (int, error) {
+	redacted := RedactSecrets(string(p))
+	return rw.underlying.Write([]byte(redacted))
+}
+
+// Call this at program start: makes all log.Print log.Printf secrets-safe
+func InstallRedactingLogger() {
+	log.SetOutput(&redactingWriter{underlying: os.Stderr})
+}
 
 // ================= ENV LOADING =================
 
@@ -1302,8 +1374,38 @@ func validateConfig() (token, channelID string, err error) {
 	return token, channelID, nil
 }
 
+func checkNotRootUser() {
+	if os.Geteuid() == 0 {
+		log.Fatalf("SECURITY: Container must not run as root! UID 0 detected. Please rebuild or run with --user/-u flag (see README). Refusing to start.")
+	}
+}
+
+func checkFilePerm(path string, want os.FileMode, require bool) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		if require {
+			log.Fatalf("SECURITY: Required config/file %s missing: %v", path, err)
+		} else {
+			log.Printf("[WARNING] File/directory %s not found: %v", path, err)
+		}
+		return
+	}
+	mode := fi.Mode().Perm()
+	if mode != want {
+		msg := fmt.Sprintf("SECURITY: %s permissions %o (want %o)", path, mode, want)
+		if require {
+			log.Fatalf(msg)
+		} else {
+			log.Printf("[WARNING] %s", msg)
+		}
+	}
+}
+
 func main() {
+	InstallRedactingLogger()
 	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
+
+	checkNotRootUser()
 
 	// Parse command-line flags for config path
 	configPath := flag.String("c", "", "Path to config.json file")
@@ -1326,8 +1428,32 @@ func main() {
 
 	// Validate API configuration if enabled
 	if apiEnabled {
-		if apiBearerToken == "" {
-			log.Fatalf("API_ENABLED=true but API_BEARER_TOKEN is not set")
+		if !isStrongToken(apiBearerToken) {
+			log.Fatalf(`API_BEARER_TOKEN too weak or missing: must be at least 32 random characters, not default or placeholder.\nGenerate a strong token (command: head -c 48 /dev/urandom | base64) and place in .env as API_BEARER_TOKEN=your_token_here.`)
+		}
+
+		allowCorsAny := strings.ToLower(os.Getenv("ALLOW_CORS_ANY")) == "true"
+		origins := []string{}
+		if apiCorsOrigins != "" {
+			for _, o := range strings.Split(apiCorsOrigins, ",") {
+				origins = append(origins, strings.TrimSpace(o))
+			}
+		}
+		wildcardPresent := false
+		for _, o := range origins {
+			if o == "*" {
+				wildcardPresent = true
+				break
+			}
+		}
+		if wildcardPresent && len(origins) > 1 {
+			log.Fatalf("CORS configuration error: wildcard '*' cannot be combined with specific origins. If you want dev mode, set only '*' or only allowlist. See README.md for details.")
+		}
+		if wildcardPresent && !allowCorsAny {
+			log.Fatalf("CORS security error: In production, you MUST provide an explicit allowlist via API_CORS_ORIGINS. Wildcard '*' is forbidden unless ALLOW_CORS_ANY=true for dev/test. See README.md for secure config instructions.")
+		}
+		if wildcardPresent && allowCorsAny {
+			log.Printf("[WARNING] ALLOW_CORS_ANY=true: API will run with wildcard ('*') origins. This is unsafe for production! Only use for local frontend development or testing.")
 		}
 		log.Printf("API server enabled on port %s with CORS origins: %s", apiPort, apiCorsOrigins)
 	}

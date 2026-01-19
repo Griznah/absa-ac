@@ -1,0 +1,7 @@
+{
+  "server_ip": "127.0.0.1",
+  "update_interval": 30,
+  "category_order": ["Drift"],
+  "category_emojis": {"Drift": "🏁"},
+  "servers": [{"name": "S1", "port": 8080, "category": "Drift"}]
+}
