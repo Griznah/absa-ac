@@ -3,7 +3,7 @@ name: Build and Push Docker Image
 on:
   push:
     tags:
-      - 'v*.*.*'
+      - "v*.*.*"
 
 permissions:
   contents: read
@@ -18,7 +18,7 @@ jobs:
       - name: Run truffleHog secrets scan
         uses: trufflesecurity/trufflehog@v3.72.0
         with:
-          scanArguments: "--regex --entropy=False --fail --max-depth=50 ."
+          extra_args: "--regex --entropy=False --fail --max-depth=50 ."
 
   govulncheck:
     runs-on: ubuntu-latest
