@@ -44,8 +44,10 @@ test.describe('Config Frontend Integration Tests', () => {
         testPort = await findFreePort();
 
         // Start Go API server for testing with isolated config
+        // Use repo root as cwd since main.go is at the root
+        const repoRoot = path.join(__dirname, '..', '..');
         apiServer = spawn('go', ['run', 'main.go', '-c', path.join(testDir, 'config.json')], {
-            cwd: testDir,
+            cwd: repoRoot,
             env: {
                 ...process.env,
                 API_ENABLED: 'true',
