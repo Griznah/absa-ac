@@ -332,8 +332,12 @@ func TestCSRFIntegration_FullRequestFlow(t *testing.T) {
 	}
 
 	var errorResponse map[string]interface{}
-	json.Unmarshal(rec3.Body.Bytes(), &errorResponse)
-	if !strings.Contains(errorResponse["error"].(string), "CSRF") {
+	if err := json.Unmarshal(rec3.Body.Bytes(), &errorResponse); err != nil {
+		t.Fatalf("Failed to parse error response: %v", err)
+	}
+
+	errorMsg, ok := errorResponse["error"].(string)
+	if !ok || !strings.Contains(errorMsg, "CSRF") {
 		t.Errorf("Expected CSRF error, got: %v", errorResponse)
 	}
 }
