@@ -91,8 +91,10 @@ func (s *Server) Start(ctx context.Context) error {
 	loggerMiddleware := Logger(s.logger)
 	// Rate limiting: fourth layer (throttling before expensive auth)
 	rateLimitMiddleware := RateLimit(s.rateLimit, s.rateBurst)
-	// Auth: innermost (validates Bearer token only after other checks pass)
+	// Auth: fifth layer (validates Bearer token)
 	authMiddleware := BearerAuth(s.bearerToken)
+	// CSRF: sixth layer (validates CSRF token for state-changing requests)
+	csrfMiddleware := CSRF
 
 	var handler http.Handler = mux
 	handler = securityHeadersMiddleware(handler)
@@ -100,6 +102,7 @@ func (s *Server) Start(ctx context.Context) error {
 	handler = loggerMiddleware(handler)
 	handler = rateLimitMiddleware(handler)
 	handler = authMiddleware(handler)
+	handler = csrfMiddleware(handler)
 
 	s.httpServer.Handler = handler
 
