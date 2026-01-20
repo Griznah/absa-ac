@@ -16,12 +16,17 @@ Discord bot for monitoring Assetto Corsa racing servers with dynamic configurati
 | `go.mod` | Go module dependencies and version pinning | Updating dependencies, checking versions |
 | `.gitignore` | Git ignore patterns (binaries, config files, IDE files) | Understanding what's excluded from version control |
 | `.github/workflows/docker-publish.yml` | CI/CD pipeline for automated builds | Understanding release process, modifying build workflow |
+| `SECURITY.md` | Security runbook with checklists, incident response, hardening guidelines | Security review, deployment hardening, incident handling |
+| `test_api_token_fails.sh` | Test script verifying Bearer token authentication rejection | Validating auth behavior, testing security fixes |
+| `test_cors_fails.sh` | Test script verifying CORS strict allowlist enforcement | Validating CORS behavior, testing security fixes |
 
 ## Subdirectories
 
 | Directory | What | When to read |
 | --------- | ---- | ------------ |
 | `.github/` | GitHub Actions workflows for automated container builds | Setting up CI/CD, understanding release automation |
+| `api/` | HTTP API server with middleware chain, config endpoints, security layers | Understanding API architecture, modifying endpoints, security hardening |
+| `pkg/` | Shared packages including session-based proxy with encryption | Understanding shared components, using proxy package |
 | `plans/` | Working planning documents for executed features | Understanding implementation history, decision rationale for past changes |
 | `static/` | Alpine.js web UI for configuration management | Understanding frontend architecture, modifying UI, debugging web interface |
 
