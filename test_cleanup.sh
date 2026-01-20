@@ -53,10 +53,9 @@ echo "=== Session Keys ==="
 remove_item ".session_key" "Session encryption key" || true
 
 # Find and remove session_key files in test temp directories
-_files=$(find . -type f -name "test_key" -path "*/tmp/*" 2>/dev/null || true)
-for file in $_files; do
+while IFS= read -r -d '' file; do
     [[ -n "$file" ]] && remove_item "$file" "Test encryption key" || true
-done || true
+done < <(find . -type f -name "test_key" -path "*/tmp/*" -print0 2>/dev/null || true)
 
 # 2. Playwright test artifacts
 echo ""
@@ -68,26 +67,23 @@ remove_item "static/test/blob-report" "Playwright blob report" || true
 # 3. Go test coverage files
 echo ""
 echo "=== Go Coverage ==="
-_files=$(find . -type f \( -name "coverage.txt" -o -name "coverage.out" -o -name "coverage.html" \) 2>/dev/null || true)
-for file in $_files; do
+while IFS= read -r -d '' file; do
     [[ -n "$file" ]] && remove_item "$file" "Go coverage file" || true
-done || true
+done < <(find . -type f \( -name "coverage.txt" -o -name "coverage.out" -o -name "coverage.html" \) -print0 2>/dev/null || true)
 
 # 4. Go test binaries
 echo ""
 echo "=== Test Binaries ==="
-_files=$(find . -type f -name "*.test" 2>/dev/null || true)
-for file in $_files; do
+while IFS= read -r -d '' file; do
     [[ -n "$file" ]] && remove_item "$file" "Test binary" || true
-done || true
+done < <(find . -type f -name "*.test" -print0 2>/dev/null || true)
 
 # 5. Temporary session directories (from proxy tests)
 echo ""
 echo "=== Session Directories ==="
-_dirs=$(find . -type d -name "sessions_*" 2>/dev/null || true)
-for dir in $_dirs; do
+while IFS= read -r -d '' dir; do
     [[ -n "$dir" ]] && remove_item "$dir" "Test session directory" || true
-done || true
+done < <(find . -type d -name "sessions_*" -print0 2>/dev/null || true)
 
 # 6. Test build artifacts
 echo ""
@@ -98,10 +94,9 @@ remove_item "build" "Build directory" || true
 # 7. Log files
 echo ""
 echo "=== Log Files ==="
-_files=$(find . -type f -name "*.log" -path "*/test/*" 2>/dev/null || true)
-for file in $_files; do
+while IFS= read -r -d '' file; do
     [[ -n "$file" ]] && remove_item "$file" "Test log file" || true
-done || true
+done < <(find . -type f -name "*.log" -path "*/test/*" -print0 2>/dev/null || true)
 
 # 8. Node modules in test directories (optional - usually keep these)
 echo ""
@@ -112,10 +107,9 @@ remove_item "node_modules/.cache" "Node cache" || true
 # 9. Any .session_key files created by tests in repo root or temp dirs
 echo ""
 echo "=== Stray Session Keys ==="
-_files=$(find . -maxdepth 3 -type f -name ".session_key" ! -path "*/node_modules/*" ! -path "*/.git/*" 2>/dev/null || true)
-for file in $_files; do
+while IFS= read -r -d '' file; do
     [[ -n "$file" ]] && remove_item "$file" "Stray session key" || true
-done || true
+done < <(find . -maxdepth 3 -type f -name ".session_key" ! -path "*/node_modules/*" ! -path "*/.git/*" -print0 2>/dev/null || true)
 
 # 10. Files of exactly 44 bytes in pkg/proxy/ (test artifacts)
 echo ""

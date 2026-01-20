@@ -19,6 +19,12 @@ function app() {
         isPollingRestart: false,
 
         init() {
+            // Restore CSRF token from sessionStorage if available
+            const storedToken = sessionStorage.getItem('csrfToken');
+            if (storedToken) {
+                this.csrfToken = storedToken;
+            }
+
             // Check for existing session by fetching config
             // Session cookie is HttpOnly, so JavaScript can't access it directly
             // If session exists, fetchConfig will succeed; if not, it will fail with 401
@@ -62,6 +68,10 @@ function app() {
                 const data = await response.json();
                 // Store CSRF token for subsequent POST/PUT/DELETE requests
                 this.csrfToken = data.csrf_token || '';
+                // Persist CSRF token to sessionStorage for page reloads
+                if (data.csrf_token) {
+                    sessionStorage.setItem('csrfToken', data.csrf_token);
+                }
 
                 // Session cookie is set automatically by backend (HttpOnly)
                 this.inputToken = '';
@@ -197,11 +207,13 @@ function app() {
             const response = await fetch(url, options);
 
             if (response.status === 401) {
-                // Session expired or invalid - stop polling
+                // Session expired or invalid - stop polling and clear CSRF token
                 if (this.pollingInterval) {
                     clearInterval(this.pollingInterval);
                     this.pollingInterval = null;
                 }
+                this.csrfToken = '';
+                sessionStorage.removeItem('csrfToken');
                 throw new Error('Unauthorized - please login again');
             }
 

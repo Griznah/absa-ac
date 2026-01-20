@@ -25,6 +25,15 @@ var hopByHopHeaders = map[string]bool{
 	"Upgrade":             true,
 }
 
+// Security-sensitive headers that should not be forwarded from client
+// to prevent IP spoofing and bypass of upstream protections
+var securitySensitiveHeaders = map[string]bool{
+	"X-Forwarded-For": true,
+	"X-Real-IP":       true,
+	"X-Forwarded-Host": true,
+	"X-Forwarded-Proto": true,
+}
+
 // ProxyHandler forwards requests to the bot API with Bearer token from session
 // Extracts session from context, decrypts token on-demand, forwards request to upstream
 // upstreamTimeout: timeout for upstream API requests (0 uses default 10s)
@@ -101,13 +110,16 @@ func forwardRequest(req *http.Request, botAPIURL string, bearerToken string, tim
 }
 
 // copyHeaders copies all headers from src to dst except hop-by-hop headers
+// and security-sensitive headers that could be spoofed by clients
 func copyHeaders(dst, src http.Header) {
 	for key, values := range src {
-		if !hopByHopHeaders[key] {
-			dst.Del(key)
-			for _, value := range values {
-				dst.Add(key, value)
-			}
+		// Skip hop-by-hop headers and security-sensitive headers
+		if hopByHopHeaders[key] || securitySensitiveHeaders[key] {
+			continue
+		}
+		dst.Del(key)
+		for _, value := range values {
+			dst.Add(key, value)
 		}
 	}
 }
