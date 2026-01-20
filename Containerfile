@@ -38,6 +38,11 @@ RUN addgroup -g 1001 absabot && \
 # Switch to non-root user
 USER 1001
 
+# Expose ports
+# 8080: Bot API server (optional, when API_ENABLED=true)
+# 3000: Proxy server (optional, when PROXY_ENABLED=true)
+EXPOSE 8080 3000
+
 # Set environment variables (replace at runtime)
 ENV DISCORD_TOKEN=""
 ENV CHANNEL_ID=""

@@ -1,9 +1,8 @@
 // Alpine.js application component for config editor
 function app() {
     return {
-        token: null,
         inputToken: '',
-        csrfToken: null,
+        csrfToken: '',
         config: {
             server_ip: '',
             update_interval: 30,
@@ -20,14 +19,24 @@ function app() {
         isPollingRestart: false,
 
         init() {
-            const storedToken = sessionStorage.getItem('apiToken');
+            // Restore CSRF token from sessionStorage if available
+            const storedToken = sessionStorage.getItem('csrfToken');
             if (storedToken) {
-                this.token = storedToken;
-                this.fetchCSRFToken().then(() => {
-                    this.fetchConfig();
-                    this.startPolling();
-                });
+                this.csrfToken = storedToken;
             }
+
+            // Check for existing session by fetching config
+            // Session cookie is HttpOnly, so JavaScript can't access it directly
+            // If session exists, fetchConfig will succeed; if not, it will fail with 401
+            this.fetchConfig().catch(() => {
+                // Session doesn't exist or expired - user needs to login
+                // This is expected behavior, no error handling needed
+            }).then(() => {
+                // Only start polling if fetchConfig succeeded
+                if (!this.error) {
+                    this.startPolling();
+                }
+            });
 
             this.$watch('config', () => {
                 if (this.dirty === false) {
@@ -37,31 +46,45 @@ function app() {
             }, { deep: true });
         },
 
-        login() {
-            if (this.inputToken.trim()) {
-                this.token = this.inputToken.trim();
-                sessionStorage.setItem('apiToken', this.token);
-                this.inputToken = '';
-                this.fetchCSRFToken().then(() => {
-                    this.fetchConfig();
-                    this.startPolling();
-                });
+        async login() {
+            if (!this.inputToken.trim()) {
+                return;
             }
-        },
 
-        async fetchCSRFToken() {
             try {
-                const response = await this.apiRequest('GET', '/api/csrf-token');
-                this.csrfToken = response.csrf_token;
+                const response = await fetch('/proxy/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ token: this.inputToken.trim() })
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.error || 'Login failed');
+                }
+
+                const data = await response.json();
+                // Store CSRF token for subsequent POST/PUT/DELETE requests
+                this.csrfToken = data.csrf_token || '';
+                // Persist CSRF token to sessionStorage for page reloads
+                if (data.csrf_token) {
+                    sessionStorage.setItem('csrfToken', data.csrf_token);
+                }
+
+                // Session cookie is set automatically by backend (HttpOnly)
+                this.inputToken = '';
+                this.fetchConfig();
+                this.startPolling();
             } catch (err) {
-                this.error = 'Failed to fetch CSRF token: ' + err.message;
-                throw err;
+                this.error = 'Login failed: ' + err.message;
             }
         },
 
         async fetchConfig() {
             try {
-                const response = await this.apiRequest('GET', '/api/config');
+                const response = await this.apiRequest('GET', '/proxy/api/config');
                 // Polling skips config update when dirty flag is set; user's unsaved edits take precedence over remote changes to prevent data loss.
                 // Note: apiRequest unwraps response.data, so response is already the data object
                 if (this.dirty === false) {
@@ -111,7 +134,7 @@ function app() {
             }
 
             try {
-                await this.apiRequest('PATCH', '/api/config', this.config);
+                await this.apiRequest('PATCH', '/proxy/api/config', this.config);
                 this.dirty = false;
                 this.remoteChanged = false;
                 this.saved = true;
@@ -158,60 +181,49 @@ function app() {
             }, 100);
         },
 
+        getCSRFToken() {
+            return this.csrfToken || '';
+        },
+
         async apiRequest(method, url, data) {
             const options = {
                 method: method,
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${this.token}`
+                    'Content-Type': 'application/json'
                 }
             };
-
-            // Add CSRF token for state-changing methods (PATCH, PUT, POST, DELETE)
-            const stateChangingMethods = ['PATCH', 'PUT', 'POST', 'DELETE'];
-            if (stateChangingMethods.includes(method)) {
-                if (!this.csrfToken) {
-                    throw new Error('CSRF token not loaded. Refresh the page.');
-                }
-                options.headers['X-CSRF-Token'] = this.csrfToken;
-            }
 
             if (data) {
                 options.body = JSON.stringify(data);
             }
 
+            if (method !== 'GET') {
+                const csrfToken = this.getCSRFToken();
+                if (csrfToken) {
+                    options.headers['X-CSRF-Token'] = csrfToken;
+                }
+            }
+
             const response = await fetch(url, options);
 
             if (response.status === 401) {
-                this.token = null;
-                sessionStorage.removeItem('apiToken');
+                // Session expired or invalid - stop polling and clear CSRF token
                 if (this.pollingInterval) {
                     clearInterval(this.pollingInterval);
                     this.pollingInterval = null;
                 }
+                this.csrfToken = '';
+                sessionStorage.removeItem('csrfToken');
                 throw new Error('Unauthorized - please login again');
             }
 
-            // Handle 403 Forbidden (could be CSRF validation failure)
             if (response.status === 403) {
                 const errorData = await response.json().catch(() => ({}));
-                if (errorData.error && errorData.error.includes('CSRF')) {
-                    // CSRF token invalid - fetch new token and retry
-                    await this.fetchCSRFToken();
-                    // Retry the original request with new CSRF token
-                    options.headers['X-CSRF-Token'] = this.csrfToken;
-                    const retryResponse = await fetch(url, options);
-                    if (!retryResponse.ok) {
-                        const retryErrorData = await retryResponse.json().catch(() => ({}));
-                        throw new Error(retryErrorData.error || retryErrorData.details || 'Request failed after retry');
-                    }
-                    return retryResponse.json().then(data => data.data);
-                }
-                throw new Error(errorData.error || errorData.details || 'Request failed');
+                throw new Error(errorData.error || 'CSRF token validation failed');
             }
 
             if (!response.ok) {
-                const errorData = await response.json();
+                const errorData = await response.json().catch(() => ({}));
                 throw new Error(errorData.error || errorData.details || 'Request failed');
             }
 

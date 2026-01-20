@@ -32,38 +32,54 @@ test.describe('Alpine.js App Unit Tests', () => {
         await page.addScriptTag({ path: appPath });
     });
 
-    test('login stores token in sessionStorage and Alpine store', async ({ page }) => {
+    test('login clears inputToken and calls /proxy/login', async ({ page }) => {
+        // Mock fetch to intercept login call
         await page.evaluate(() => {
-            const appInstance = app();
-            appInstance.inputToken = 'test-token-123';
-            appInstance.login();
+            window.loginCalled = false;
+            window.loginToken = null;
 
-            return {
-                storeToken: appInstance.token,
-                sessionToken: sessionStorage.getItem('apiToken')
+            // Override global fetch
+            const originalFetch = globalThis.fetch;
+            globalThis.fetch = async (url, options) => {
+                if (url === '/proxy/login' && options?.method === 'POST') {
+                    window.loginCalled = true;
+                    const body = JSON.parse(options.body);
+                    window.loginToken = body.token;
+                    return {
+                        ok: true,
+                        status: 200,
+                        json: async () => ({ csrf_token: 'test-csrf-token-123' })
+                    };
+                }
+                // For other calls, return mock success
+                return {
+                    ok: true,
+                    status: 200,
+                    json: async () => ({ data: { server_ip: '192.168.1.1', update_interval: 30, category_order: [], category_emojis: {}, servers: [] } })
+                };
             };
         });
 
-        const result = await page.evaluate(() => {
+        const result = await page.evaluate(async () => {
             const appInstance = app();
-            appInstance.inputToken = 'test-token-123';
-            appInstance.login();
+            appInstance.inputToken = 'test-bearer-token';
+            await appInstance.login();
+
             return {
-                storeToken: appInstance.token,
-                sessionToken: sessionStorage.getItem('apiToken'),
-                inputCleared: appInstance.inputToken === ''
+                inputCleared: appInstance.inputToken === '',
+                loginCalled: window.loginCalled,
+                loginToken: window.loginToken
             };
         });
 
-        expect(result.storeToken).toBe('test-token-123');
-        expect(result.sessionToken).toBe('test-token-123');
         expect(result.inputCleared).toBe(true);
+        expect(result.loginCalled).toBe(true);
+        expect(result.loginToken).toBe('test-bearer-token');
     });
 
     test('config watcher sets dirty flag on changes', async ({ page }) => {
         const result = await page.evaluate(() => {
             const appInstance = app();
-            appInstance.token = 'test-token';
             appInstance.config = {
                 server_ip: '192.168.1.1',
                 update_interval: 30,
@@ -232,7 +248,6 @@ test.describe('Alpine.js App Unit Tests', () => {
     test('polling backoff doubles on errors', async ({ page }) => {
         const result = await page.evaluate(() => {
             const appInstance = app();
-            appInstance.token = 'test-token';
 
             // Simulate error in fetchConfig
             const initialBackoff = appInstance.pollBackoffInterval;
@@ -250,7 +265,6 @@ test.describe('Alpine.js App Unit Tests', () => {
     test('polling backoff caps at 300s', async ({ page }) => {
         const result = await page.evaluate(() => {
             const appInstance = app();
-            appInstance.token = 'test-token';
             appInstance.pollBackoffInterval = 200000; // Already high
 
             appInstance.pollBackoffInterval = Math.min(appInstance.pollBackoffInterval * 2, 300000);
@@ -264,7 +278,6 @@ test.describe('Alpine.js App Unit Tests', () => {
     test('polling backoff resets on success', async ({ page }) => {
         const result = await page.evaluate(() => {
             const appInstance = app();
-            appInstance.token = 'test-token';
             appInstance.pollBackoffInterval = 120000; // Elevated backoff
 
             // Simulate success in fetchConfig
@@ -302,7 +315,6 @@ test.describe('Alpine.js App Unit Tests', () => {
     test('config update skipped when dirty is local', async ({ page }) => {
         const result = await page.evaluate(() => {
             const appInstance = app();
-            appInstance.token = 'test-token';
             appInstance.config = {
                 server_ip: '192.168.1.1',
                 update_interval: 30,
@@ -422,5 +434,290 @@ test.describe('Alpine.js App Unit Tests', () => {
         });
 
         expect(result).toBe(false);
+    });
+
+    test('login does not store token in app instance', async ({ page }) => {
+        // Mock fetch for login
+        await page.evaluate(() => {
+            const originalFetch = globalThis.fetch;
+            globalThis.fetch = async (url, options) => {
+                if (url === '/proxy/login') {
+                    return {
+                        ok: true,
+                        status: 200,
+                        json: async () => ({ csrf_token: 'test-csrf' })
+                    };
+                }
+                return {
+                    ok: true,
+                    status: 200,
+                    json: async () => ({ data: { server_ip: '192.168.1.1', update_interval: 30, category_order: [], category_emojis: {}, servers: [] } })
+                };
+            };
+        });
+
+        const result = await page.evaluate(async () => {
+            const appInstance = app();
+            appInstance.inputToken = 'test-token-123';
+            await appInstance.login();
+
+            return {
+                hasInputToken: appInstance.inputToken !== '',
+                hasCsrfToken: appInstance.csrfToken !== ''
+            };
+        });
+
+        expect(result.hasInputToken).toBe(false);
+        expect(result.hasCsrfToken).toBe(true);
+    });
+
+    test('login sends POST to /proxy/login with token in body', async ({ page }) => {
+        await page.evaluate(() => {
+            window.loginRequest = null;
+
+            const originalFetch = globalThis.fetch;
+            globalThis.fetch = async (url, options) => {
+                // Capture only the login request
+                if (url === '/proxy/login' && options?.method === 'POST') {
+                    window.loginRequest = {
+                        url: url,
+                        method: options?.method,
+                        body: options?.body ? JSON.parse(options.body) : null
+                    };
+                }
+
+                return {
+                    ok: true,
+                    status: 200,
+                    json: async () => ({ csrf_token: 'test-csrf' })
+                };
+            };
+        });
+
+        await page.evaluate(async () => {
+            const appInstance = app();
+            appInstance.inputToken = 'my-bearer-token';
+            await appInstance.login();
+        });
+
+        const result = await page.evaluate(() => {
+            return window.loginRequest;
+        });
+
+        expect(result.url).toBe('/proxy/login');
+        expect(result.method).toBe('POST');
+        expect(result.body).toEqual({ token: 'my-bearer-token' });
+    });
+
+    test('apiRequest uses /proxy prefix and no Authorization header', async ({ page }) => {
+        await page.evaluate(() => {
+            window.requestUrl = null;
+            window.requestHeaders = null;
+
+            const originalFetch = globalThis.fetch;
+            globalThis.fetch = async (url, options) => {
+                window.requestUrl = url;
+                window.requestHeaders = options?.headers;
+
+                return {
+                    ok: true,
+                    status: 200,
+                    json: async () => ({ data: { server_ip: '192.168.1.1', update_interval: 30, category_order: [], category_emojis: {}, servers: [] } })
+                };
+            };
+        });
+
+        await page.evaluate(() => {
+            const appInstance = app();
+            appInstance.apiRequest('GET', '/proxy/api/config');
+        });
+
+        const result = await page.evaluate(() => {
+            return {
+                url: window.requestUrl,
+                hasAuthHeader: window.requestHeaders?.hasOwnProperty('Authorization')
+            };
+        });
+
+        expect(result.url).toBe('/proxy/api/config');
+        expect(result.hasAuthHeader).toBe(false);
+    });
+
+    test('CSRF token property exists and getCSRFToken is a function', async ({ page }) => {
+        const result = await page.evaluate(() => {
+            const appInstance = app();
+            return {
+                hasCsrfToken: 'csrfToken' in appInstance,
+                isGetCSRFTokenFunction: typeof appInstance.getCSRFToken === 'function'
+            };
+        });
+
+        expect(result.hasCsrfToken).toBe(true);
+        expect(result.isGetCSRFTokenFunction).toBe(true);
+    });
+
+    test('getCSRFToken returns stored csrfToken property', async ({ page }) => {
+        const result = await page.evaluate(() => {
+            const appInstance = app();
+            appInstance.csrfToken = 'test-csrf-token-123';
+            const token = appInstance.getCSRFToken();
+            return {
+                token: token,
+                isEmpty: token === ''
+            };
+        });
+
+        expect(result.token).toBe('test-csrf-token-123');
+        expect(result.isEmpty).toBe(false);
+    });
+
+    test('getCSRFToken returns empty string when not set', async ({ page }) => {
+        const result = await page.evaluate(() => {
+            const appInstance = app();
+            return appInstance.getCSRFToken();
+        });
+
+        expect(result).toBe('');
+    });
+
+    test('apiRequest adds X-CSRF-Token header for POST', async ({ page }) => {
+        await page.evaluate(() => {
+            window.requestHeaders = null;
+
+            const originalFetch = globalThis.fetch;
+            globalThis.fetch = async (url, options) => {
+                window.requestHeaders = options?.headers;
+                return {
+                    ok: true,
+                    status: 200,
+                    json: async () => ({ data: { server_ip: '192.168.1.1' } })
+                };
+            };
+        });
+
+        await page.evaluate(() => {
+            const appInstance = app();
+            appInstance.csrfToken = 'csrf-token-456';
+            appInstance.apiRequest('POST', '/proxy/api/config', { test: 'data' });
+        });
+
+        const result = await page.evaluate(() => {
+            return {
+                hasCsrfHeader: window.requestHeaders?.hasOwnProperty('X-CSRF-Token'),
+                csrfToken: window.requestHeaders?.['X-CSRF-Token']
+            };
+        });
+
+        expect(result.hasCsrfHeader).toBe(true);
+        expect(result.csrfToken).toBe('csrf-token-456');
+    });
+
+    test('apiRequest adds X-CSRF-Token header for PATCH', async ({ page }) => {
+        await page.evaluate(() => {
+            window.requestHeaders = null;
+
+            const originalFetch = globalThis.fetch;
+            globalThis.fetch = async (url, options) => {
+                window.requestHeaders = options?.headers;
+                return {
+                    ok: true,
+                    status: 200,
+                    json: async () => ({ data: { server_ip: '192.168.1.1' } })
+                };
+            };
+        });
+
+        await page.evaluate(() => {
+            const appInstance = app();
+            appInstance.csrfToken = 'patch-token-789';
+            appInstance.apiRequest('PATCH', '/proxy/api/config', { update: 'me' });
+        });
+
+        const result = await page.evaluate(() => {
+            return {
+                csrfToken: window.requestHeaders?.['X-CSRF-Token']
+            };
+        });
+
+        expect(result.csrfToken).toBe('patch-token-789');
+    });
+
+    test('apiRequest does not add X-CSRF-Token for GET', async ({ page }) => {
+        await page.evaluate(() => {
+            window.requestHeaders = null;
+
+            const originalFetch = globalThis.fetch;
+            globalThis.fetch = async (url, options) => {
+                window.requestHeaders = options?.headers;
+                return {
+                    ok: true,
+                    status: 200,
+                    json: async () => ({ data: { server_ip: '192.168.1.1' } })
+                };
+            };
+        });
+
+        await page.evaluate(() => {
+            const appInstance = app();
+            appInstance.csrfToken = 'get-token-999';
+            appInstance.apiRequest('GET', '/proxy/api/config');
+        });
+
+        const result = await page.evaluate(() => {
+            return {
+                hasCsrfHeader: window.requestHeaders?.hasOwnProperty('X-CSRF-Token')
+            };
+        });
+
+        expect(result.hasCsrfHeader).toBe(false);
+    });
+
+    test('apiRequest handles 403 Forbidden with CSRF error message', async ({ page }) => {
+        await page.evaluate(() => {
+            const originalFetch = globalThis.fetch;
+            globalThis.fetch = async (url, options) => {
+                return {
+                    ok: false,
+                    status: 403,
+                    json: async () => ({ error: 'forbidden: CSRF token mismatch' })
+                };
+            };
+        });
+
+        const error = await page.evaluate(async () => {
+            const appInstance = app();
+            try {
+                await appInstance.apiRequest('POST', '/proxy/api/config', { test: 'data' });
+                return null;
+            } catch (err) {
+                return err.message;
+            }
+        });
+
+        expect(error).toContain('CSRF token mismatch');
+    });
+
+    test('getCSRFToken returns stored value', async ({ page }) => {
+        const result = await page.evaluate(() => {
+            const appInstance = app();
+            appInstance.csrfToken = 'test-token-abc123';
+            return appInstance.getCSRFToken();
+        });
+
+        expect(result).toBe('test-token-abc123');
+    });
+
+    test('getCSRFToken can be updated', async ({ page }) => {
+        const result = await page.evaluate(() => {
+            const appInstance = app();
+            appInstance.csrfToken = 'initial-token';
+            const first = appInstance.getCSRFToken();
+            appInstance.csrfToken = 'updated-token';
+            const second = appInstance.getCSRFToken();
+            return { first, second };
+        });
+
+        expect(result.first).toBe('initial-token');
+        expect(result.second).toBe('updated-token');
     });
 });
