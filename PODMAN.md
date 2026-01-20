@@ -119,6 +119,47 @@ podman rm ac-discordbot
 
 ## Troubleshooting
 
+### Rootless Podman: UID/GID Mapping Errors
+
+If you see errors like:
+```
+cannot find UID/GID for user: no subuid ranges found for user "username" in /etc/subuid
+potentially insufficient UIDs or GIDs available in user namespace
+```
+
+This means your user lacks subuid/subgid ranges required for rootless containers that create users (like Alpine images).
+
+**Fix:**
+
+1. **Add subuid/subgid ranges** (requires root access):
+```bash
+# Check current ranges (should show lines for your username)
+cat /etc/subuid
+cat /etc/subgid
+
+# If empty, add ranges (replace YOUR_USERNAME with your actual username)
+sudo usermod --add-subuids 100000-165535 YOUR_USERNAME
+sudo usermod --add-subgids 100000-165535 YOUR_USERNAME
+
+# Verify
+cat /etc/subuid | grep YOUR_USERNAME
+cat /etc/subgid | grep YOUR_USERNAME
+# Should output: YOUR_USERNAME:100000:65536
+```
+
+2. **Reset Podman** to apply changes:
+```bash
+podman system reset
+podman system migrate
+```
+
+3. **Rebuild**:
+```bash
+podman build -t ac-discordbot .
+```
+
+**Note**: This is a one-time setup per user. Each user who runs rootless Podman needs their own subuid/subgid ranges.
+
 ### Permission Denied Errors
 
 If the bot cannot read config.json:
