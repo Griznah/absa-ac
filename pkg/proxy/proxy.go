@@ -28,8 +28,9 @@ var hopByHopHeaders = map[string]bool{
 // Security-sensitive headers that should not be forwarded from client
 // to prevent IP spoofing and bypass of upstream protections
 var securitySensitiveHeaders = map[string]bool{
-	"X-Forwarded-For": true,
-	"X-Real-IP":       true,
+	"Forwarded":        true,
+	"X-Forwarded-For":  true,
+	"X-Real-IP":        true,
 	"X-Forwarded-Host": true,
 	"X-Forwarded-Proto": true,
 }
