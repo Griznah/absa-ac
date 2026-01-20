@@ -149,7 +149,6 @@ cat /etc/subgid | grep YOUR_USERNAME
 
 2. **Reset Podman** to apply changes:
 ```bash
-podman system reset
 podman system migrate
 ```
 
