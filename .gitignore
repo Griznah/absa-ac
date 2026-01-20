@@ -138,3 +138,5 @@ absa-ac
 .session_key
 # Session storage directory
 sessions/
+static/test/node_modules/
+static/test/package-lock.json
