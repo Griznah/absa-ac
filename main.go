@@ -1479,7 +1479,7 @@ func main() {
 	apiEnabled = os.Getenv("API_ENABLED") == "true"
 	apiPort = os.Getenv("API_PORT")
 	if apiPort == "" {
-		apiPort = "8080" // Default port
+		apiPort = "3001" // Default port
 	}
 	apiBearerToken = os.Getenv("API_BEARER_TOKEN")
 	apiCorsOrigins = os.Getenv("API_CORS_ORIGINS")
@@ -1520,7 +1520,7 @@ func main() {
 	proxyEnabled = os.Getenv("PROXY_ENABLED") == "true"
 	proxyPort = os.Getenv("PROXY_PORT")
 	if proxyPort == "" {
-		proxyPort = "3000" // Default port
+		proxyPort = "3001" // Default port
 	}
 	// Default to HTTPS for production security. Set PROXY_HTTPS=false to disable (not recommended).
 	proxyHTTPS := os.Getenv("PROXY_HTTPS") != "false"

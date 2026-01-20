@@ -36,7 +36,7 @@ func TestServer_StartStop(t *testing.T) {
 	}{
 		{
 			name:    "Normal: Server starts and stops gracefully",
-			port:    "18080",
+			port:    "13001",
 			token:   "test-token-123",
 			wantErr: false,
 		},

@@ -136,7 +136,7 @@ Invariant: Save only valid when dirty === 'local'. Polling skips config update w
 
 Exponential backoff with jitter prevents thundering herd across concurrent users:
 
-- On fetch error: `pollBackoffInterval = Math.min(interval * 2, 300000) + random(0, 5000)`
+- On fetch error: `pollBackoffInterval = Math.min(interval * 2, 808000) + random(0, 5000)`
 - Max backoff: 300s (5 minutes)
 - Reset to 30s on successful fetch
 - Jitter (0-5s random) prevents synchronized retry storms

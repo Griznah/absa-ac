@@ -25,7 +25,7 @@ func TestMiddlewareChainOrder(t *testing.T) {
 	cm := &mockConfigManager{config: map[string]any{}}
 
 	// Create server with all middleware
-	_ = NewServer(cm, "8080", "test-token", []string{"*"}, logger.stdLogger())
+	_ = NewServer(cm, "3001", "test-token", []string{"*"}, logger.stdLogger())
 
 	// This test logs middleware execution order
 	// After M2 implementation, verify order matches expected sequence
@@ -53,7 +53,7 @@ func TestFullRequestFlow(t *testing.T) {
 
 	// Apply middleware chain
 	handler := SecurityHeaders()(mux)
-	handler = CORS([]string{"http://localhost:8080"})(handler)
+	handler = CORS([]string{"http://localhost:3001"})(handler)
 	handler = Logger(testLogger)(handler)
 	handler = RateLimit(10, 20)(handler)
 	handler = BearerAuth("valid-token")(handler)
@@ -61,7 +61,7 @@ func TestFullRequestFlow(t *testing.T) {
 	// Test valid request
 	req := httptest.NewRequest("GET", "/api/config", nil)
 	req.Header.Set("Authorization", "Bearer valid-token")
-	req.Header.Set("Origin", "http://localhost:8080")
+	req.Header.Set("Origin", "http://localhost:3001")
 	rr := httptest.NewRecorder()
 
 	handler.ServeHTTP(rr, req)

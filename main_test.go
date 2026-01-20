@@ -538,7 +538,7 @@ func TestValidateConfigStruct_InvalidPort(t *testing.T) {
 		{"way above maximum", 100000, true},
 		{"minimum valid", 1, false},
 		{"maximum valid", 65535, false},
-		{"common HTTP port", 8080, false},
+		{"common HTTP port", 3001, false},
 	}
 
 	for _, tc := range testCases {
@@ -2311,7 +2311,7 @@ func TestProxyServer_Startup(t *testing.T) {
 
 	// Set environment variables for API and proxy
 	os.Setenv("API_ENABLED", "true")
-	os.Setenv("API_PORT", "18080")
+	os.Setenv("API_PORT", "13001")
 	os.Setenv("API_BEARER_TOKEN", "test-token")
 	defer os.Unsetenv("API_ENABLED")
 	defer os.Unsetenv("API_PORT")
@@ -2320,10 +2320,10 @@ func TestProxyServer_Startup(t *testing.T) {
 	// Reset global variables with mutex protection
 	globalStateMutex.Lock()
 	apiEnabled = true
-	apiPort = "18080"
+	apiPort = "13001"
 	apiBearerToken = "test-token"
 	proxyEnabled = false // Will be set by startProxyServer test
-	proxyPort = "13000"
+	proxyPort = "18080"
 	globalStateMutex.Unlock()
 
 	// Create bot directly without starting Discord session
@@ -2337,7 +2337,7 @@ func TestProxyServer_Startup(t *testing.T) {
 
 	// Start proxy server
 	globalStateMutex.Lock()
-	proxyPort = "13000"
+	proxyPort = "18080"
 	globalStateMutex.Unlock()
 
 	if err := startProxyServer(bot, apiBearerToken, false, 10*time.Second); err != nil {
@@ -2419,7 +2419,7 @@ func TestProxyServer_DisabledFlag(t *testing.T) {
 	apiPort = "18081"
 	apiBearerToken = "test-token"
 	proxyEnabled = false
-	proxyPort = "3000"
+	proxyPort = "8080"
 	globalStateMutex.Unlock()
 
 	// Create bot directly without Discord session

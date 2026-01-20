@@ -47,7 +47,7 @@ func TestCSRFTokenRotation(t *testing.T) {
 // TestCSRFTokenEndpoint verifies /api/csrf-token returns token
 func TestCSRFTokenEndpoint(t *testing.T) {
 	cm := &mockConfigManager{}
-	server := NewServer(cm, "8080", "test-token", []string{"*"}, nil)
+	server := NewServer(cm, "3001", "test-token", []string{"*"}, nil)
 	mux := http.NewServeMux()
 	RegisterRoutes(mux, server)
 
@@ -277,7 +277,7 @@ func TestCSRFMiddleware_StateChangingMethodsRequireToken(t *testing.T) {
 // TestCSRFIntegration_FullRequestFlow tests end-to-end CSRF in API request
 func TestCSRFIntegration_FullRequestFlow(t *testing.T) {
 	cm := &mockConfigManager{}
-	server := NewServer(cm, "8080", "test-token", []string{"*"}, nil)
+	server := NewServer(cm, "3001", "test-token", []string{"*"}, nil)
 	mux := http.NewServeMux()
 	RegisterRoutes(mux, server)
 

@@ -180,8 +180,8 @@ Set the following environment variables:
 # Enable the REST API server
 API_ENABLED=true
 
-# API server port (default: 8080)
-API_PORT=8080
+# API server port (default: 3001)
+API_PORT=3001
 
 # Bearer token for authentication (required if API_ENABLED=true)
 API_BEARER_TOKEN=your-secure-token-here
@@ -206,36 +206,36 @@ All endpoints (except `/health`) require Bearer token authentication:
 export API_TOKEN="your-secure-token-here"
 
 # Health check (no auth required)
-curl http://localhost:8080/health
+curl http://localhost:3001/health
 
 # Get current configuration
 curl -H "Authorization: Bearer $API_TOKEN" \
-  http://localhost:8080/api/config
+  http://localhost:3001/api/config
 
 # Get servers only
 curl -H "Authorization: Bearer $API_TOKEN" \
-  http://localhost:8080/api/config/servers
+  http://localhost:3001/api/config/servers
 
 # Partial update (PATCH) - merges with existing config
 curl -X PATCH \
   -H "Authorization: Bearer $API_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"update_interval": 120}' \
-  http://localhost:8080/api/config
+  http://localhost:3001/api/config
 
 # Full replacement (PUT) - replaces entire config
 curl -X PUT \
   -H "Authorization: Bearer $API_TOKEN" \
   -H "Content-Type: application/json" \
   -d @config.json \
-  http://localhost:8080/api/config
+  http://localhost:3001/api/config
 
 # Validate without applying
 curl -X POST \
   -H "Authorization: Bearer $API_TOKEN" \
   -H "Content-Type: application/json" \
   -d @config.json \
-  http://localhost:8080/api/config/validate
+  http://localhost:3001/api/config/validate
 ```
 
 ### API Features
@@ -286,8 +286,8 @@ Set the following environment variables:
 # Enable the session-based proxy server
 PROXY_ENABLED=true
 
-# Proxy server port (default: 3000)
-PROXY_PORT=3000
+# Proxy server port (default: 8080)
+PROXY_PORT=8080
 
 # Bearer token for proxy validation (uses same token as bot API)
 # Must match API_BEARER_TOKEN if both are enabled
@@ -302,16 +302,16 @@ curl -X POST \
   -H "Content-Type: application/json" \
   -d '{"token": "Bearer your-token-here"}' \
   -c cookies.txt \
-  http://localhost:3000/proxy/login
+  http://localhost:8080/proxy/login
 
 # Access API using session cookie
 curl -b cookies.txt \
-  http://localhost:3000/proxy/api/config
+  http://localhost:8080/proxy/api/config
 
 # Logout (invalidate session)
 curl -X POST \
   -b cookies.txt \
-  http://localhost:3000/proxy/logout
+  http://localhost:8080/proxy/logout
 ```
 
 ### Proxy Features
@@ -345,14 +345,14 @@ podman run -d \
   -e API_BEARER_TOKEN="your_api_token" \
   -e API_ENABLED=true \
   -e PROXY_ENABLED=true \
+  -p 3001:3001 \
   -p 8080:8080 \
-  -p 3000:3000 \
   -v /opt/ac-discordbot/config.json:/data/config.json:ro \
   --restart unless-stopped \
   ac-discordbot
 ```
 
-The web UI (`static/`) connects to the proxy at port 3000 for secure session-based access, while direct API clients can still connect to port 8080 with Bearer token authentication.
+The web UI (`static/`) connects to the proxy at port 8080 for secure session-based access, while direct API clients can still connect to port 3001 with Bearer token authentication.
 
 ## Deployment
 

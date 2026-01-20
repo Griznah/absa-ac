@@ -59,7 +59,7 @@ func BenchmarkJSONEncode(b *testing.B) {
 		servers[i] = map[string]interface{}{
 			"name":     "server-test",
 			"ip":       "192.168.1.1",
-			"port":     8080 + i,
+			"port":     3001 + i,
 			"category": "GT3",
 		}
 	}
@@ -80,7 +80,7 @@ func BenchmarkJSONDecode(b *testing.B) {
 		servers[i] = map[string]interface{}{
 			"name":     "server-test",
 			"ip":       "192.168.1.1",
-			"port":     8080 + i,
+			"port":     3001 + i,
 			"category": "GT3",
 		}
 	}

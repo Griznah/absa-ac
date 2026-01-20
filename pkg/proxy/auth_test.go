@@ -309,7 +309,7 @@ func TestLoginHandler_MissingBearerPrefix(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 
-	handler := LoginHandler(store, "http://localhost:8080", false, 0)
+	handler := LoginHandler(store, "http://localhost:3001", false, 0)
 	handler.ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusBadRequest {
@@ -337,7 +337,7 @@ func TestLoginHandler_EmptyToken(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 
-	handler := LoginHandler(store, "http://localhost:8080", false, 0)
+	handler := LoginHandler(store, "http://localhost:3001", false, 0)
 	handler.ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusBadRequest {
@@ -362,7 +362,7 @@ func TestLoginHandler_InvalidRequestBody(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 
-	handler := LoginHandler(store, "http://localhost:8080", false, 0)
+	handler := LoginHandler(store, "http://localhost:3001", false, 0)
 	handler.ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusBadRequest {
@@ -386,7 +386,7 @@ func TestLoginHandler_WrongMethod(t *testing.T) {
 	req := httptest.NewRequest("GET", "/proxy/login", nil)
 	rr := httptest.NewRecorder()
 
-	handler := LoginHandler(store, "http://localhost:8080", false, 0)
+	handler := LoginHandler(store, "http://localhost:3001", false, 0)
 	handler.ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusMethodNotAllowed {

@@ -311,7 +311,7 @@ Token comparison uses constant-time algorithm. Response time does not reveal tok
 | Variable | Description | Default | Required |
 | -------- | ----------- | ------- | -------- |
 | `API_ENABLED` | Enable API server | `false` | No |
-| `API_PORT` | HTTP listen port | `8080` | If API_ENABLED |
+| `API_PORT` | HTTP listen port | `3001` | If API_ENABLED |
 | `API_BEARER_TOKEN` | Bearer token for authentication | - | If API_ENABLED |
 | `API_CORS_ORIGINS` | Comma-separated CORS allowlist | - | No |
 | `API_RATE_LIMIT` | Requests per second per IP | `10` | No |

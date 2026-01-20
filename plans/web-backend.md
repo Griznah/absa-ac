@@ -310,7 +310,7 @@ Background goroutine every 5 minutes
 - Response status and body returned to client unmodified
 - Upstream connection errors return 503 with error message
 - Upstream 401/403 errors returned to client (invalid session)
-- Request URL path preserved (e.g., /proxy/api/config -> http://localhost:8080/api/config)
+- Request URL path preserved (e.g., /proxy/api/config -> http://localhost:3001/api/config)
 - Query parameters forwarded correctly
 - Request/response body buffered and forwarded
 
@@ -328,7 +328,7 @@ Background goroutine every 5 minutes
   - `ProxyHandler(botAPIURL string, store *SessionStore) http.Handler`: Extract session from context, add Bearer token, forward request
   - `forwardRequest(req *http.Request, botAPIURL string) (*http.Response, error)`: Create upstream request, copy headers/body, execute
   - `copyHeaders(dst, src http.Header)`: Copy all headers except Hop-by-hop (Connection, Keep-Alive, etc.)
-- Bot API URL: http://localhost:8080 (default API_PORT in main.go)
+- Bot API URL: http://localhost:3001 (default API_PORT in main.go)
 - Bearer token extraction: session.Token from context
 - Upstream timeout: 10 seconds (Decision: "10-second proxy upstream timeout")
 - Error responses: JSON format {error: string} matching existing API responses
@@ -409,10 +409,10 @@ Background goroutine every 5 minutes
 
 **Acceptance Criteria**:
 - Proxy server starts when PROXY_ENABLED=true
-- Proxy listens on PROXY_PORT (default 3000)
+- Proxy listens on PROXY_PORT (default 8080)
 - Proxy uses same API_BEARER_TOKEN as bot API validation
 - Graceful shutdown stops proxy server
-- Containerfile exposes port 3000
+- Containerfile exposes port 8080
 - Bot API and proxy run concurrently in same binary
 - Existing bot functionality unchanged
 
@@ -433,13 +433,13 @@ Background goroutine every 5 minutes
   - Import `github.com/bombom/absa-ac/proxy` package
   - Call `startProxyServer()` in main() if proxyEnabled
   - Add proxy server shutdown to `WaitForShutdown()` or cleanup handler
-- Environment variables: PROXY_ENABLED (bool, default false), PROXY_PORT (string, default "3000")
+- Environment variables: PROXY_ENABLED (bool, default false), PROXY_PORT (string, default "8080")
 - Session directory: "./sessions" (relative to working directory)
 - Graceful shutdown: Shutdown context cancels proxy server context
 - Error handling: Log proxy startup errors, continue bot operation if proxy fails
 
 - Modify `Containerfile`:
-  - Add `EXPOSE 3000` for proxy port
+  - Add `EXPOSE 8080` for proxy port
   - No other changes (binary contains both bot and proxy)
 
 **Code Changes**:
