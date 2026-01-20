@@ -4,23 +4,41 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AC Bot Configuration</title>
-    <link rel="stylesheet" href="/static/css/styles.css">
-    <script defer src="/static/js/alpine.min.js"></script>
-    <script defer src="/static/js/app.js"></script>
+    <link rel="stylesheet" href="/css/styles.css">
+    <script defer src="/js/alpine.min.js"></script>
+    <script defer src="/js/app.js"></script>
 </head>
 <body x-data="app()">
-    <!-- Login Modal -->
-    <div class="modal" x-show="!token" x-transition>
-        <div class="modal-content">
-            <h2>Authentication Required</h2>
-            <input type="password" x-model="inputToken" placeholder="Enter API token">
-            <button @click="login()">Login</button>
+    <!-- Main Container -->
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <div class="header-title">
+                <h1>AC Bot Configuration</h1>
+                <span class="auth-indicator" :class="{ authenticated: authenticated }" x-text="authenticated ? '● Connected' : '○ Not connected'"></span>
+            </div>
+            <div class="header-actions">
+                <template x-if="authenticated">
+                    <button @click="logout()" class="btn-logout">Logout</button>
+                </template>
+            </div>
         </div>
-    </div>
 
-    <!-- Main Config Form -->
-    <div class="container" x-show="token">
-        <h1>Server Configuration</h1>
+        <!-- Auth Section -->
+        <section class="auth-section" x-show="!authenticated">
+            <h2>Authentication Required</h2>
+            <p class="auth-description">Enter your API token to configure the bot.</p>
+            <div class="login-form">
+                <input type="password" x-model="inputToken" placeholder="Enter API token" @keydown.enter="login()">
+                <button @click="login()" :disabled="!inputToken.trim()">Login</button>
+            </div>
+            <div class="auth-status">
+                <span x-show="error" x-text="error" class="error-message"></span>
+            </div>
+        </section>
+
+        <!-- Config Form (only visible when authenticated) -->
+        <div x-show="authenticated">
 
         <!-- Global Settings -->
         <section>
@@ -65,8 +83,8 @@
         <div class="actions">
             <button @click="save()" :disabled="!dirty">Save Changes</button>
             <span x-show="saved" class="success-message">Saved!</span>
-            <span x-show="error" x-text="error" class="error-message"></span>
             <span x-show="remoteChanged" class="warning-message">Remote config changed - reload to see latest or save to overwrite</span>
+        </div>
         </div>
     </div>
 </body>

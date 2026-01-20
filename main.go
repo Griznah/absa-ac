@@ -1407,13 +1407,25 @@ func startProxyServer(bot *Bot, bearerToken string, useHTTPS bool, upstreamTimeo
 	// Setup proxy routes
 	mux := http.NewServeMux()
 
-	// Auth endpoints
-	mux.HandleFunc("/proxy/login", proxy.LoginHandler(store, botAPIURL, useHTTPS, upstreamTimeout))
-	mux.HandleFunc("/proxy/logout", proxy.LogoutHandler(store, useHTTPS))
+	// Static file server for web UI (served from root path "/")
+	// Files are served directly from ./static directory
+	// Security: http.FileServer prevents directory traversal attacks
+	staticDir := "./static"
+	if _, err := os.Stat(staticDir); err == nil {
+		// Serve static files at root path (/, /css/styles.css, /js/app.js, etc.)
+		mux.Handle("/", http.FileServer(http.Dir(staticDir)))
+		log.Printf("Proxy serving static files from %s at root path", staticDir)
+	} else {
+		log.Printf("Warning: static directory not found at %s", staticDir)
+	}
 
-	// Proxy API endpoints (authenticated with CSRF)
+	// Auth endpoints
+	mux.HandleFunc("/login", proxy.LoginHandler(store, botAPIURL, useHTTPS, upstreamTimeout))
+	mux.HandleFunc("/logout", proxy.LogoutHandler(store, useHTTPS))
+
+	// API endpoints (authenticated with CSRF, proxied to backend)
 	proxyHandler := proxy.CSRFMiddleware(proxy.ProxyHandler(botAPIURL, store, upstreamTimeout), store)
-	mux.Handle("/proxy/api/", proxyHandler)
+	mux.Handle("/api/", proxyHandler)
 
 	// Create HTTP server
 	bot.proxyServer = &http.Server{
