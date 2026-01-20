@@ -46,7 +46,8 @@ behind TLS.
     hashes:
 
     ``` bash
-    htpasswd -nbB admin strongpassword
+    # Prompts for password securely (stdin, not command line)
+    htpasswd -nbB admin
     ```
 
 6.  **Operational Considerations**

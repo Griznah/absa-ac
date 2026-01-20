@@ -74,7 +74,7 @@ func loadEncryptionKey() ([]byte, error) {
 	// Try to read existing key file
 	keyBytes, err := os.ReadFile(keyFile)
 	if err == nil {
-		key, err := base64.StdEncoding.DecodeString(string(keyBytes))
+		key, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(keyBytes)))
 		if err != nil {
 			return nil, fmt.Errorf("failed to decode encryption key from file: %w", err)
 		}

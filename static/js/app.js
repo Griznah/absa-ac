@@ -2,6 +2,7 @@
 function app() {
     return {
         inputToken: '',
+        csrfToken: '',
         config: {
             server_ip: '',
             update_interval: 30,
@@ -57,6 +58,10 @@ function app() {
                     const errorData = await response.json().catch(() => ({}));
                     throw new Error(errorData.error || 'Login failed');
                 }
+
+                const data = await response.json();
+                // Store CSRF token for subsequent POST/PUT/DELETE requests
+                this.csrfToken = data.csrf_token || '';
 
                 // Session cookie is set automatically by backend (HttpOnly)
                 this.inputToken = '';
@@ -167,16 +172,7 @@ function app() {
         },
 
         getCSRFToken() {
-            const name = 'proxy_session=';
-            const decodedCookie = decodeURIComponent(document.cookie);
-            const cookies = decodedCookie.split(';');
-            for (let cookie of cookies) {
-                cookie = cookie.trim();
-                if (cookie.indexOf(name) === 0) {
-                    return cookie.substring(name.length);
-                }
-            }
-            return '';
+            return this.csrfToken || '';
         },
 
         async apiRequest(method, url, data) {

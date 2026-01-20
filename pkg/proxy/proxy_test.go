@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -14,7 +15,11 @@ import (
 func setupTestEnv(t *testing.T) {
 	t.Helper()
 	key := base64.StdEncoding.EncodeToString([]byte(strings.Repeat("x", 32)))
-	t.Setenv("SESSION_ENCRYPTION_KEY", key)
+	keyFile := t.TempDir() + "/test_key"
+	t.Setenv("SESSION_KEY_FILE", keyFile)
+	if err := os.WriteFile(keyFile, []byte(key), 0600); err != nil {
+		t.Fatalf("Failed to write test key file: %v", err)
+	}
 }
 
 func TestProxyHandler_Normal_GET(t *testing.T) {

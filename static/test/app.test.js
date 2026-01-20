@@ -48,7 +48,7 @@ test.describe('Alpine.js App Unit Tests', () => {
                     return {
                         ok: true,
                         status: 200,
-                        json: async () => ({})
+                        json: async () => ({ csrf_token: 'test-csrf-token-123' })
                     };
                 }
                 // For other calls, return mock success
@@ -60,10 +60,10 @@ test.describe('Alpine.js App Unit Tests', () => {
             };
         });
 
-        const result = await page.evaluate(() => {
+        const result = await page.evaluate(async () => {
             const appInstance = app();
             appInstance.inputToken = 'test-bearer-token';
-            appInstance.login();
+            await appInstance.login();
 
             return {
                 inputCleared: appInstance.inputToken === '',
@@ -436,7 +436,7 @@ test.describe('Alpine.js App Unit Tests', () => {
         expect(result).toBe(false);
     });
 
-    test('login does not store token in sessionStorage', async ({ page }) => {
+    test('login does not store token in app instance', async ({ page }) => {
         // Mock fetch for login
         await page.evaluate(() => {
             const originalFetch = globalThis.fetch;
@@ -445,7 +445,7 @@ test.describe('Alpine.js App Unit Tests', () => {
                     return {
                         ok: true,
                         status: 200,
-                        json: async () => ({})
+                        json: async () => ({ csrf_token: 'test-csrf' })
                     };
                 }
                 return {
@@ -456,53 +456,52 @@ test.describe('Alpine.js App Unit Tests', () => {
             };
         });
 
-        const result = await page.evaluate(() => {
+        const result = await page.evaluate(async () => {
             const appInstance = app();
             appInstance.inputToken = 'test-token-123';
-            appInstance.login();
+            await appInstance.login();
 
             return {
-                sessionToken: sessionStorage.getItem('apiToken'),
-                hasTokenProperty: 'token' in appInstance
+                hasInputToken: appInstance.inputToken !== '',
+                hasCsrfToken: appInstance.csrfToken !== ''
             };
         });
 
-        expect(result.sessionToken).toBe(null);
-        expect(result.hasTokenProperty).toBe(false);
+        expect(result.hasInputToken).toBe(false);
+        expect(result.hasCsrfToken).toBe(true);
     });
 
     test('login sends POST to /proxy/login with token in body', async ({ page }) => {
         await page.evaluate(() => {
-            window.requestUrl = null;
-            window.requestMethod = null;
-            window.requestBody = null;
+            window.loginRequest = null;
 
             const originalFetch = globalThis.fetch;
             globalThis.fetch = async (url, options) => {
-                window.requestUrl = url;
-                window.requestMethod = options?.method;
-                window.requestBody = options?.body ? JSON.parse(options.body) : null;
+                // Capture only the login request
+                if (url === '/proxy/login' && options?.method === 'POST') {
+                    window.loginRequest = {
+                        url: url,
+                        method: options?.method,
+                        body: options?.body ? JSON.parse(options.body) : null
+                    };
+                }
 
                 return {
                     ok: true,
                     status: 200,
-                    json: async () => ({})
+                    json: async () => ({ csrf_token: 'test-csrf' })
                 };
             };
         });
 
-        await page.evaluate(() => {
+        await page.evaluate(async () => {
             const appInstance = app();
             appInstance.inputToken = 'my-bearer-token';
-            appInstance.login();
+            await appInstance.login();
         });
 
         const result = await page.evaluate(() => {
-            return {
-                url: window.requestUrl,
-                method: window.requestMethod,
-                body: window.requestBody
-            };
+            return window.loginRequest;
         });
 
         expect(result.url).toBe('/proxy/login');
@@ -544,23 +543,23 @@ test.describe('Alpine.js App Unit Tests', () => {
         expect(result.hasAuthHeader).toBe(false);
     });
 
-    test('CSRF token property does not exist', async ({ page }) => {
+    test('CSRF token property exists and getCSRFToken is a function', async ({ page }) => {
         const result = await page.evaluate(() => {
             const appInstance = app();
             return {
                 hasCsrfToken: 'csrfToken' in appInstance,
-                hasFetchCSRFToken: typeof appInstance.fetchCSRFToken === 'function'
+                isGetCSRFTokenFunction: typeof appInstance.getCSRFToken === 'function'
             };
         });
 
-        expect(result.hasCsrfToken).toBe(false);
-        expect(result.hasFetchCSRFToken).toBe(false);
+        expect(result.hasCsrfToken).toBe(true);
+        expect(result.isGetCSRFTokenFunction).toBe(true);
     });
 
-    test('getCSRFToken extracts session cookie value', async ({ page }) => {
+    test('getCSRFToken returns stored csrfToken property', async ({ page }) => {
         const result = await page.evaluate(() => {
-            document.cookie = 'proxy_session=test-session-123';
             const appInstance = app();
+            appInstance.csrfToken = 'test-csrf-token-123';
             const token = appInstance.getCSRFToken();
             return {
                 token: token,
@@ -568,13 +567,12 @@ test.describe('Alpine.js App Unit Tests', () => {
             };
         });
 
-        expect(result.token).toBe('test-session-123');
+        expect(result.token).toBe('test-csrf-token-123');
         expect(result.isEmpty).toBe(false);
     });
 
-    test('getCSRFToken returns empty string when cookie not set', async ({ page }) => {
+    test('getCSRFToken returns empty string when not set', async ({ page }) => {
         const result = await page.evaluate(() => {
-            document.cookie = '';
             const appInstance = app();
             return appInstance.getCSRFToken();
         });
@@ -584,7 +582,6 @@ test.describe('Alpine.js App Unit Tests', () => {
 
     test('apiRequest adds X-CSRF-Token header for POST', async ({ page }) => {
         await page.evaluate(() => {
-            document.cookie = 'proxy_session=csrf-token-456';
             window.requestHeaders = null;
 
             const originalFetch = globalThis.fetch;
@@ -600,6 +597,7 @@ test.describe('Alpine.js App Unit Tests', () => {
 
         await page.evaluate(() => {
             const appInstance = app();
+            appInstance.csrfToken = 'csrf-token-456';
             appInstance.apiRequest('POST', '/proxy/api/config', { test: 'data' });
         });
 
@@ -616,7 +614,6 @@ test.describe('Alpine.js App Unit Tests', () => {
 
     test('apiRequest adds X-CSRF-Token header for PATCH', async ({ page }) => {
         await page.evaluate(() => {
-            document.cookie = 'proxy_session=patch-token-789';
             window.requestHeaders = null;
 
             const originalFetch = globalThis.fetch;
@@ -632,6 +629,7 @@ test.describe('Alpine.js App Unit Tests', () => {
 
         await page.evaluate(() => {
             const appInstance = app();
+            appInstance.csrfToken = 'patch-token-789';
             appInstance.apiRequest('PATCH', '/proxy/api/config', { update: 'me' });
         });
 
@@ -646,7 +644,6 @@ test.describe('Alpine.js App Unit Tests', () => {
 
     test('apiRequest does not add X-CSRF-Token for GET', async ({ page }) => {
         await page.evaluate(() => {
-            document.cookie = 'proxy_session=get-token-999';
             window.requestHeaders = null;
 
             const originalFetch = globalThis.fetch;
@@ -662,6 +659,7 @@ test.describe('Alpine.js App Unit Tests', () => {
 
         await page.evaluate(() => {
             const appInstance = app();
+            appInstance.csrfToken = 'get-token-999';
             appInstance.apiRequest('GET', '/proxy/api/config');
         });
 
@@ -699,25 +697,27 @@ test.describe('Alpine.js App Unit Tests', () => {
         expect(error).toContain('CSRF token mismatch');
     });
 
-    test('getCSRFToken handles URL-encoded cookie values', async ({ page }) => {
+    test('getCSRFToken returns stored value', async ({ page }) => {
         const result = await page.evaluate(() => {
-            document.cookie = 'proxy_session=encoded%20token%21%40%23';
             const appInstance = app();
+            appInstance.csrfToken = 'test-token-abc123';
             return appInstance.getCSRFToken();
         });
 
-        expect(result).toBe('encoded token!@#');
+        expect(result).toBe('test-token-abc123');
     });
 
-    test('getCSRFToken handles multiple cookies', async ({ page }) => {
+    test('getCSRFToken can be updated', async ({ page }) => {
         const result = await page.evaluate(() => {
-            document.cookie = 'other_cookie=other_value';
-            document.cookie = 'proxy_session=correct-session-token';
-            document.cookie = 'another_cookie=another_value';
             const appInstance = app();
-            return appInstance.getCSRFToken();
+            appInstance.csrfToken = 'initial-token';
+            const first = appInstance.getCSRFToken();
+            appInstance.csrfToken = 'updated-token';
+            const second = appInstance.getCSRFToken();
+            return { first, second };
         });
 
-        expect(result).toBe('correct-session-token');
+        expect(result.first).toBe('initial-token');
+        expect(result.second).toBe('updated-token');
     });
 });

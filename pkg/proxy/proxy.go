@@ -7,7 +7,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"strings"
 	"time"
 )
 
@@ -104,7 +103,7 @@ func forwardRequest(req *http.Request, botAPIURL string, bearerToken string, tim
 // copyHeaders copies all headers from src to dst except hop-by-hop headers
 func copyHeaders(dst, src http.Header) {
 	for key, values := range src {
-		if !hopByHopHeaders[key] && !strings.HasPrefix(key, "X-") {
+		if !hopByHopHeaders[key] {
 			dst.Del(key)
 			for _, value := range values {
 				dst.Add(key, value)

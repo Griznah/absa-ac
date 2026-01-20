@@ -143,13 +143,10 @@ func getClientIP(r *http.Request) string {
 
 	// Check X-Forwarded-For header (may contain multiple IPs)
 	// Format: "X-Forwarded-For: client, proxy1, proxy2"
-	// We want the leftmost (original client) IP
+	// Trust rightmost IP (last proxy) not leftmost (can be spoofed)
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		// Split by comma and take the first IP
-		if idx := strings.Index(xff, ","); idx != -1 {
-			return strings.TrimSpace(xff[:idx])
-		}
-		return xff
+		ips := strings.Split(xff, ",")
+		return strings.TrimSpace(ips[len(ips)-1])
 	}
 
 	// Fall back to RemoteAddr
