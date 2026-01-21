@@ -17,17 +17,17 @@ Browser
                              ▼
 Go Container
   Proxy Handler (session-based auth)
-    - POST /proxy/login
-    - POST /proxy/logout
-    - GET/POST/PATCH /proxy/api/*
+    - POST /login
+    - POST /logout
+    - GET/POST/PATCH /api/*
   Bot API Handler (Bearer token auth)
     - GET /api/config
     - PATCH /api/config
     - POST /api/config/validate
   Static File Server
     - GET / -> index.html
-    - GET /app.js -> static/js/app.js
-    - GET /styles.css -> static/css/styles.css
+    - GET /css/styles.css
+    - GET /js/app.js
 ```
 
 The frontend lives entirely within the Go container, served from `/static` at the root path. Alpine.js provides reactivity without a build step. Session authentication uses HTTP-only cookies (inaccessible to JavaScript XSS), eliminating Bearer token exposure in browser storage. Static files and API endpoints share the same origin, eliminating CORS complexity.
@@ -45,10 +45,10 @@ User loads page
     │   └─> Not found: Show login modal
     │
     ├─> User enters Bearer token (or auto-login)
-    │   └─> POST /proxy/login {token: "..."}
+    │   └─> POST /login {token: "..."}
     │       └─> Receive HTTP-only session cookie
     │
-    ├─> Fetch config from GET /proxy/api/config
+    ├─> Fetch config from GET /api/config
     │   └─> Alpine reactive state updated
     │
     ├─> User edits form field
@@ -56,15 +56,15 @@ User loads page
     │
     ├─> User clicks "Save"
     │   ├─> Validate inputs client-side
-    │   ├─> PATCH /proxy/api/config with changed fields only
+    │   ├─> PATCH /api/config with changed fields only
     │   ├─> On success: Refetch full config, clear dirty flag
     │   └─> On error: Display server validation message
     │
     └─> Auto-poll every 30s
-        └─> GET /proxy/api/config -> Update if remote changed
+        └─> GET /api/config -> Update if remote changed
 ```
 
-**Authentication flow**: User enters Bearer token ONCE during login. Frontend sends token to `/proxy/login`, backend validates against bot API, returns HTTP-only session cookie. Subsequent requests include cookie automatically (browser behavior). Backend validates session, adds Bearer token server-side, proxies to bot API. Bearer token never stored in frontend (sessionStorage/localStorage), eliminating XSS exposure risk.
+**Authentication flow**: User enters Bearer token ONCE during login. Frontend sends token to `/login`, backend validates against bot API, returns HTTP-only session cookie. Subsequent requests include cookie automatically (browser behavior). Backend validates session, adds Bearer token server-side, proxies to bot API. Bearer token never stored in frontend (sessionStorage/localStorage), eliminating XSS exposure risk.
 
 **State synchronization strategy**: Every PATCH triggers a full GET to ensure UI matches server truth. Polling runs at 30s intervals (matching bot's update_interval). When dirty flag is set (user has unsaved edits), polling updates skip config state to prevent data loss; instead, a warning indicator appears showing remote config changed.
 
@@ -110,7 +110,7 @@ User loads page
 
 ## Security Considerations
 
-**Session-based authentication**: HTTP-only session cookie blocks JavaScript XSS access to Bearer token. Token stored server-side only. Session scoped to `/proxy` path with SameSite=Strict attribute. 4-hour session timeout balances security and UX.
+**Session-based authentication**: HTTP-only session cookie blocks JavaScript XSS access to Bearer token. Token stored server-side only. Session scoped to `/` path with SameSite=Strict attribute. 4-hour session timeout balances security and UX.
 
 **XSS prevention**: Alpine.js auto-escapes HTML in text bindings. Server names and user input sanitized on display. Server-side validation exists (see `validateConfigStructSafeRuntime` in main.go). Bearer token never accessible via JavaScript (HTTP-only cookie).
 

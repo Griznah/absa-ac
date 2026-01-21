@@ -287,7 +287,7 @@ func SetSessionCookie(w http.ResponseWriter, sessionID string, useHTTPS bool) {
 	cookie := &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    sessionID,
-		Path:     "/proxy",
+		Path:     "/",
 		MaxAge:   int((4 * time.Hour).Seconds()),
 		HttpOnly: true,
 		SameSite: http.SameSiteStrictMode,
@@ -301,7 +301,7 @@ func ClearSessionCookie(w http.ResponseWriter, useHTTPS bool) {
 	cookie := &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    "",
-		Path:     "/proxy",
+		Path:     "/",
 		MaxAge:   -1,
 		HttpOnly: true,
 		SameSite: http.SameSiteStrictMode,

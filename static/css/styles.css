@@ -25,7 +25,74 @@ body {
     padding: 2rem;
 }
 
-/* Modal Styles */
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 2rem;
+}
+
+.header-title {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.header h1 {
+    margin: 0;
+}
+
+.auth-indicator {
+    font-size: 0.875rem;
+    color: #999;
+    font-weight: normal;
+}
+
+.auth-indicator.authenticated {
+    color: var(--color-text);
+}
+
+.btn-logout {
+    padding: 0.5rem 1rem;
+    background: var(--color-bg);
+    color: var(--color-text);
+    border: 1px solid var(--color-border);
+    font-size: 0.875rem;
+}
+
+/* Auth Section */
+.auth-section {
+    text-align: center;
+    padding: 3rem 2rem;
+    border-bottom: 1px solid var(--color-border);
+}
+
+.auth-description {
+    color: #666;
+    margin-bottom: 1.5rem;
+}
+
+.login-form {
+    display: flex;
+    gap: 0.5rem;
+    max-width: 500px;
+    margin: 0 auto;
+}
+
+.login-form input {
+    flex: 1;
+    margin-bottom: 0;
+}
+
+.login-form button {
+    white-space: nowrap;
+}
+
+.auth-status {
+    margin-top: 1rem;
+}
+
+/* Modal Styles (no longer used but kept for reference) */
 .modal {
     position: fixed;
     top: 0;
@@ -148,6 +215,14 @@ button:disabled {
 
     .server-item input[type="number"],
     .server-item select {
+        width: 100%;
+    }
+
+    .login-form {
+        flex-direction: column;
+    }
+
+    .login-form button {
         width: 100%;
     }
 }
