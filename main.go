@@ -228,32 +228,26 @@ func (cm *ConfigManager) getLastModTime() (time.Time, error) {
 // checkAndReloadIfNeeded checks if the config file has changed and reloads synchronously.
 // Uses a short 5ms debounce to batch rapid file writes (e.g., editor saves).
 // Returns after reload completes (or immediately if no change detected).
+// Holds the lock during the entire operation to prevent race conditions.
 func (cm *ConfigManager) checkAndReloadIfNeeded() error {
 	cm.mu.Lock()
+	defer cm.mu.Unlock()
 
 	// Check current file modification time
 	currentModTime, err := cm.getLastModTime()
 	if err != nil {
-		cm.mu.Unlock()
 		return fmt.Errorf("failed to stat config file: %w", err)
 	}
 
 	// No change detected
 	if currentModTime.Equal(cm.lastModTime) || currentModTime.Before(cm.lastModTime) {
-		cm.mu.Unlock()
 		return nil
 	}
 
-	// File has changed, release lock during debounce wait
-	cm.mu.Unlock()
-
+	// File has changed, wait briefly to batch rapid writes
 	// Short debounce: wait 5ms for additional writes to settle
 	// This prevents excessive reloads during editor save operations
 	time.Sleep(5 * time.Millisecond)
-
-	// Re-acquire lock for reload
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
 
 	// Re-check file modification time after debounce
 	currentModTime, err = cm.getLastModTime()
