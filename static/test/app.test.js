@@ -32,7 +32,7 @@ test.describe('Alpine.js App Unit Tests', () => {
         await page.addScriptTag({ path: appPath });
     });
 
-    test('login clears inputToken and calls /proxy/login', async ({ page }) => {
+    test('login clears inputToken and calls /login', async ({ page }) => {
         // Mock fetch to intercept login call
         await page.evaluate(() => {
             window.loginCalled = false;
@@ -41,7 +41,7 @@ test.describe('Alpine.js App Unit Tests', () => {
             // Override global fetch
             const originalFetch = globalThis.fetch;
             globalThis.fetch = async (url, options) => {
-                if (url === '/proxy/login' && options?.method === 'POST') {
+                if (url === '/login' && options?.method === 'POST') {
                     window.loginCalled = true;
                     const body = JSON.parse(options.body);
                     window.loginToken = body.token;
@@ -441,7 +441,7 @@ test.describe('Alpine.js App Unit Tests', () => {
         await page.evaluate(() => {
             const originalFetch = globalThis.fetch;
             globalThis.fetch = async (url, options) => {
-                if (url === '/proxy/login') {
+                if (url === '/login') {
                     return {
                         ok: true,
                         status: 200,
@@ -471,14 +471,14 @@ test.describe('Alpine.js App Unit Tests', () => {
         expect(result.hasCsrfToken).toBe(true);
     });
 
-    test('login sends POST to /proxy/login with token in body', async ({ page }) => {
+    test('login sends POST to /login with token in body', async ({ page }) => {
         await page.evaluate(() => {
             window.loginRequest = null;
 
             const originalFetch = globalThis.fetch;
             globalThis.fetch = async (url, options) => {
                 // Capture only the login request
-                if (url === '/proxy/login' && options?.method === 'POST') {
+                if (url === '/login' && options?.method === 'POST') {
                     window.loginRequest = {
                         url: url,
                         method: options?.method,
@@ -504,7 +504,7 @@ test.describe('Alpine.js App Unit Tests', () => {
             return window.loginRequest;
         });
 
-        expect(result.url).toBe('/proxy/login');
+        expect(result.url).toBe('/login');
         expect(result.method).toBe('POST');
         expect(result.body).toEqual({ token: 'my-bearer-token' });
     });
@@ -529,7 +529,7 @@ test.describe('Alpine.js App Unit Tests', () => {
 
         await page.evaluate(() => {
             const appInstance = app();
-            appInstance.apiRequest('GET', '/proxy/api/config');
+            appInstance.apiRequest('GET', '/api/config');
         });
 
         const result = await page.evaluate(() => {
@@ -539,7 +539,7 @@ test.describe('Alpine.js App Unit Tests', () => {
             };
         });
 
-        expect(result.url).toBe('/proxy/api/config');
+        expect(result.url).toBe('/api/config');
         expect(result.hasAuthHeader).toBe(false);
     });
 
@@ -598,7 +598,7 @@ test.describe('Alpine.js App Unit Tests', () => {
         await page.evaluate(() => {
             const appInstance = app();
             appInstance.csrfToken = 'csrf-token-456';
-            appInstance.apiRequest('POST', '/proxy/api/config', { test: 'data' });
+            appInstance.apiRequest('POST', '/api/config', { test: 'data' });
         });
 
         const result = await page.evaluate(() => {
@@ -630,7 +630,7 @@ test.describe('Alpine.js App Unit Tests', () => {
         await page.evaluate(() => {
             const appInstance = app();
             appInstance.csrfToken = 'patch-token-789';
-            appInstance.apiRequest('PATCH', '/proxy/api/config', { update: 'me' });
+            appInstance.apiRequest('PATCH', '/api/config', { update: 'me' });
         });
 
         const result = await page.evaluate(() => {
@@ -660,7 +660,7 @@ test.describe('Alpine.js App Unit Tests', () => {
         await page.evaluate(() => {
             const appInstance = app();
             appInstance.csrfToken = 'get-token-999';
-            appInstance.apiRequest('GET', '/proxy/api/config');
+            appInstance.apiRequest('GET', '/api/config');
         });
 
         const result = await page.evaluate(() => {
@@ -687,7 +687,7 @@ test.describe('Alpine.js App Unit Tests', () => {
         const error = await page.evaluate(async () => {
             const appInstance = app();
             try {
-                await appInstance.apiRequest('POST', '/proxy/api/config', { test: 'data' });
+                await appInstance.apiRequest('POST', '/api/config', { test: 'data' });
                 return null;
             } catch (err) {
                 return err.message;

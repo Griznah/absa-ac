@@ -2,6 +2,7 @@
 function app() {
     return {
         inputToken: '',
+        authenticated: false,
         csrfToken: '',
         config: {
             server_ip: '',
@@ -27,14 +28,13 @@ function app() {
 
             // Check for existing session by fetching config
             // Session cookie is HttpOnly, so JavaScript can't access it directly
-            // If session exists, fetchConfig will succeed; if not, it will fail with 401
+            // If session exists, fetchConfig will succeed and set authenticated=true
+            // If not, it will fail with 401 and authenticated stays false
             this.fetchConfig().catch(() => {
                 // Session doesn't exist or expired - user needs to login
-                // This is expected behavior, no error handling needed
-            }).then(() => {
-                // Only start polling if fetchConfig succeeded
-                if (!this.error) {
-                    this.startPolling();
+                // Only clear error if not authenticated (preserves errors for authenticated users)
+                if (!this.authenticated) {
+                    this.error = '';
                 }
             });
 
@@ -51,8 +51,11 @@ function app() {
                 return;
             }
 
+            const originalError = this.error;
+            this.error = '';
+
             try {
-                const response = await fetch('/proxy/login', {
+                const response = await fetch('/login', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
@@ -75,16 +78,52 @@ function app() {
 
                 // Session cookie is set automatically by backend (HttpOnly)
                 this.inputToken = '';
-                this.fetchConfig();
-                this.startPolling();
+                this.authenticated = true;
+
+                // Fetch config and start polling on successful login
+                await this.fetchConfig();
             } catch (err) {
                 this.error = 'Login failed: ' + err.message;
             }
         },
 
+        async logout() {
+            try {
+                const response = await fetch('/logout', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                if (response.ok) {
+                    // Clear local state
+                    this.authenticated = false;
+                    this.csrfToken = '';
+                    sessionStorage.removeItem('csrfToken');
+                    this.inputToken = '';
+                    this.config = {
+                        server_ip: '',
+                        update_interval: 30,
+                        category_order: [],
+                        category_emojis: {},
+                        servers: []
+                    };
+
+                    // Stop polling
+                    if (this.pollingInterval) {
+                        clearInterval(this.pollingInterval);
+                        this.pollingInterval = null;
+                    }
+                }
+            } catch (err) {
+                this.error = 'Logout failed: ' + err.message;
+            }
+        },
+
         async fetchConfig() {
             try {
-                const response = await this.apiRequest('GET', '/proxy/api/config');
+                const response = await this.apiRequest('GET', '/api/config');
                 // Polling skips config update when dirty flag is set; user's unsaved edits take precedence over remote changes to prevent data loss.
                 // Note: apiRequest unwraps response.data, so response is already the data object
                 if (this.dirty === false) {
@@ -94,13 +133,18 @@ function app() {
                     // Remote changed while user is editing - show warning indicator
                     this.remoteChanged = true;
                 }
+                // Set authenticated to true on successful fetch
+                this.authenticated = true;
                 // Reset backoff on successful fetch
                 this.pollBackoffInterval = 80800;
                 this.startPolling(); // Restart with normal interval
             } catch (err) {
-                this.error = 'Failed to fetch config: ' + err.message;
+                // Only show error if we're authenticated (401 is expected for unauthenticated users)
+                if (this.authenticated) {
+                    this.error = 'Failed to fetch config: ' + err.message;
+                }
                 // Exponential backoff: double interval up to max 300s (5 minutes) with jitter
-                this.pollBackoffInterval = Math.min(this.pollBackoffInterval * 2, 808000) + Math.random() * 5000;
+                this.pollBackoffInterval = Math.min(this.pollBackoffInterval * 2, 300000) + Math.random() * 5000;
                 this.startPolling(); // Restart with backoff interval
             }
         },
@@ -134,7 +178,7 @@ function app() {
             }
 
             try {
-                await this.apiRequest('PATCH', '/proxy/api/config', this.config);
+                await this.apiRequest('PATCH', '/api/config', this.config);
                 this.dirty = false;
                 this.remoteChanged = false;
                 this.saved = true;
@@ -212,6 +256,7 @@ function app() {
                     clearInterval(this.pollingInterval);
                     this.pollingInterval = null;
                 }
+                this.authenticated = false;
                 this.csrfToken = '';
                 sessionStorage.removeItem('csrfToken');
                 throw new Error('Unauthorized - please login again');
