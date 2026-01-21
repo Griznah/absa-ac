@@ -32,8 +32,10 @@ function app() {
             // If not, it will fail with 401 and authenticated stays false
             this.fetchConfig().catch(() => {
                 // Session doesn't exist or expired - user needs to login
-                // This is expected behavior, no error handling needed
-                this.error = '';
+                // Only clear error if not authenticated (preserves errors for authenticated users)
+                if (!this.authenticated) {
+                    this.error = '';
+                }
             });
 
             this.$watch('config', () => {

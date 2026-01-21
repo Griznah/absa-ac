@@ -83,6 +83,7 @@
         <div class="actions">
             <button @click="save()" :disabled="!dirty">Save Changes</button>
             <span x-show="saved" class="success-message">Saved!</span>
+            <span x-show="error" x-text="error" class="error-message"></span>
             <span x-show="remoteChanged" class="warning-message">Remote config changed - reload to see latest or save to overwrite</span>
         </div>
         </div>
