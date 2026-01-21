@@ -182,13 +182,11 @@ type Server struct {
 // ConfigManager provides thread-safe access to configuration with dynamic reload
 // Uses atomic.Value for lock-free reads (critical for performance during server polling)
 // Uses sync.RWMutex to serialize reload operations (rare writes vs frequent reads)
-// Debounces rapid file writes to prevent excessive reload attempts during editor save operations
 type ConfigManager struct {
-	config        atomic.Value // stores *Config
-	configPath    string
-	lastModTime   time.Time
-	mu            sync.RWMutex
-	debounceTimer *time.Timer // Timer for debouncing rapid file writes
+	config      atomic.Value // stores *Config
+	configPath  string
+	lastModTime time.Time
+	mu          sync.RWMutex
 }
 
 // NewConfigManager creates a new ConfigManager with an initial configuration
@@ -227,11 +225,10 @@ func (cm *ConfigManager) getLastModTime() (time.Time, error) {
 	return info.ModTime(), nil
 }
 
-// checkAndReloadIfNeeded checks if the config file has changed and schedules debounced reload
-// Returns nil immediately after scheduling (doesn't wait for reload to complete)
-// Debouncing prevents excessive reloads during rapid file writes (e.g., editor save operations)
-// Most text editors perform multiple write operations when saving files, causing multiple
-// file modification events. Without debouncing, each write would trigger a separate reload.
+// checkAndReloadIfNeeded checks if the config file has changed and reloads synchronously.
+// Uses a short 5ms debounce to batch rapid file writes (e.g., editor saves).
+// Returns after reload completes (or immediately if no change detected).
+// Holds the lock during the entire operation to prevent race conditions.
 func (cm *ConfigManager) checkAndReloadIfNeeded() error {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
@@ -247,39 +244,19 @@ func (cm *ConfigManager) checkAndReloadIfNeeded() error {
 		return nil
 	}
 
-	// File has changed, schedule debounced reload
-	// Stop any existing timer to reset debounce window on each new write
-	if cm.debounceTimer != nil {
-		cm.debounceTimer.Stop()
-	}
+	// File has changed, wait briefly to batch rapid writes
+	// Short debounce: wait 5ms for additional writes to settle
+	// This prevents excessive reloads during editor save operations
+	time.Sleep(5 * time.Millisecond)
 
-	// Create new timer that fires 100ms after last write
-	// If another write occurs within 100ms, this timer will be stopped and reset
-	cm.debounceTimer = time.AfterFunc(100*time.Millisecond, func() {
-		// Timer callback runs in separate goroutine
-		if err := cm.performReload(); err != nil {
-			log.Printf("Config reload failed: %v", err)
-		}
-	})
-
-	return nil
-}
-
-// performReload executes the actual config reload (load, validate, atomic swap)
-// Called by debounce timer after writes have settled
-// Logs errors but never crashes - bot continues with old config on reload failure
-func (cm *ConfigManager) performReload() error {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
-
-	// Double-check modification time (file might have changed again during debounce)
-	currentModTime, err := cm.getLastModTime()
+	// Re-check file modification time after debounce
+	currentModTime, err = cm.getLastModTime()
 	if err != nil {
 		return fmt.Errorf("failed to stat config file: %w", err)
 	}
 
-	// If file hasn't changed since last reload, skip
-	if currentModTime.Equal(cm.lastModTime) {
+	// If no change detected after debounce (file was written before our check), skip
+	if currentModTime.Equal(cm.lastModTime) || currentModTime.Before(cm.lastModTime) {
 		return nil
 	}
 
@@ -297,7 +274,6 @@ func (cm *ConfigManager) performReload() error {
 	}
 
 	// Initialize server IPs from global ServerIP setting.
-	// Must complete before atomic swap; readers see config via atomic.Value without locks.
 	initializeServerIPs(newCfg)
 
 	// Success: atomically swap config and update mod time
@@ -308,18 +284,11 @@ func (cm *ConfigManager) performReload() error {
 	return nil
 }
 
-// Cleanup stops the debounce timer and releases resources
-// Called during bot shutdown to prevent timer callbacks after shutdown
+// Cleanup releases resources
+// Called during bot shutdown
 // Safe to call multiple times (idempotent)
 func (cm *ConfigManager) Cleanup() {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
-
-	// Stop timer if running
-	if cm.debounceTimer != nil {
-		cm.debounceTimer.Stop()
-		cm.debounceTimer = nil
-	}
+	// No-op: no resources to clean up anymore
 }
 
 // WriteConfig writes a complete new configuration to disk with backup and atomic write
@@ -990,16 +959,19 @@ func fetchServerInfo(server Server) ServerInfo {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
+		log.Printf("Server '%s' failed to create request: %v", server.Name, err)
 		return offlineServerInfo(server)
 	}
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
+		log.Printf("Server '%s' (%s) request failed: %v", server.Name, url, err)
 		return offlineServerInfo(server)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		log.Printf("Server '%s' (%s) returned status %d", server.Name, url, resp.StatusCode)
 		return offlineServerInfo(server)
 	}
 
@@ -1010,6 +982,7 @@ func fetchServerInfo(server Server) ServerInfo {
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		log.Printf("Server '%s' (%s) failed to decode response: %v", server.Name, url, err)
 		return offlineServerInfo(server)
 	}
 
@@ -1017,6 +990,8 @@ func fetchServerInfo(server Server) ServerInfo {
 	if trackName == "." || trackName == "" {
 		trackName = "Unknown"
 	}
+
+	log.Printf("Server '%s' online: %s, players %d/%d", server.Name, trackName, data.Clients, data.MaxClients)
 
 	return ServerInfo{
 		Name:       server.Name,
@@ -1510,7 +1485,7 @@ func main() {
 	apiEnabled = os.Getenv("API_ENABLED") == "true"
 	apiPort = os.Getenv("API_PORT")
 	if apiPort == "" {
-		apiPort = "8080" // Default port
+		apiPort = "3001" // Default port
 	}
 	apiBearerToken = os.Getenv("API_BEARER_TOKEN")
 	apiCorsOrigins = os.Getenv("API_CORS_ORIGINS")
@@ -1551,7 +1526,7 @@ func main() {
 	proxyEnabled = os.Getenv("PROXY_ENABLED") == "true"
 	proxyPort = os.Getenv("PROXY_PORT")
 	if proxyPort == "" {
-		proxyPort = "3000" // Default port
+		proxyPort = "3001" // Default port
 	}
 	// Default to HTTPS for production security. Set PROXY_HTTPS=false to disable (not recommended).
 	proxyHTTPS := os.Getenv("PROXY_HTTPS") != "false"

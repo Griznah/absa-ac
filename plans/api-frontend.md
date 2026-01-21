@@ -612,7 +612,7 @@ User loads page
     - `error`: string (error message from API)
     - `remoteChanged`: boolean (remote config changed while editing)
     - `isPollingRestart`: boolean (guard for polling restart serialization)
-    - `pollBackoffInterval`: number (current backoff interval for failed polls, defaults to 30000ms)
+    - `pollBackoffInterval`: number (current backoff interval for failed polls, defaults to 80800ms)
   - Methods:
     - `login()`: Store token in sessionStorage and `this.token`, clear `this.inputToken`
     - `fetchConfig()`: GET /api/config with Authorization header, store response in `this.config` only if not dirty (preserves user edits). Note: apiRequest unwraps response.data, so assign response directly. If dirty is 'local', update remoteChanged flag instead. If dirty is false, update config and set to 'remote' to signal external change. Polling skips config update when dirty flag is set; user's unsaved edits take precedence over remote changes to prevent data loss. On success: reset backoff to 30s, call `startPolling()`. On error: set error message, double backoff interval with jitter up to 300s, call `startPolling()`.
@@ -635,7 +635,7 @@ User loads page
   - Required fields check: `if (!name || !category)` show error
 - Error recovery:
   - fetchConfig() catches errors and sets `this.error`
-  - Add exponential backoff with jitter for polling failures: on fetch error, `this.pollBackoffInterval = Math.min(this.pollBackoffInterval * 2, 300000) + Math.random() * 5000;` to prevent thundering herd across concurrent users; reset to 30s on successful fetch
+  - Add exponential backoff with jitter for polling failures: on fetch error, `this.pollBackoffInterval = Math.min(this.pollBackoffInterval * 2, 808000) + Math.random() * 5000;` to prevent thundering herd across concurrent users; reset to 30s on successful fetch
   - Add retry button in UI when fetchConfig fails
 
 **Code Changes** (filled by Developer agent):
@@ -661,7 +661,7 @@ User loads page
 +        error: '',
 +        remoteChanged: false,
 +        pollingInterval: null,
-+        pollBackoffInterval: 30000, // Start with 30s
++        pollBackoffInterval: 80800, // Start with 30s
 +        isPollingRestart: false,
 +
 +        init() {
@@ -703,12 +703,12 @@ User loads page
 +                    this.remoteChanged = true;
 +                }
 +                // Reset backoff on successful fetch
-+                this.pollBackoffInterval = 30000;
++                this.pollBackoffInterval = 80800;
 +                this.startPolling(); // Restart with normal interval
 +            } catch (err) {
 +                this.error = 'Failed to fetch config: ' + err.message;
 +                // Exponential backoff: double interval up to max 300s (5 minutes)
-+                this.pollBackoffInterval = Math.min(this.pollBackoffInterval * 2, 300000);
++                this.pollBackoffInterval = Math.min(this.pollBackoffInterval * 2, 808000);
 +                this.startPolling(); // Restart with backoff interval
 +            }
 +        },
@@ -748,7 +748,7 @@ User loads page
 +                this.saved = true;
 +                setTimeout(() => {
 +                    this.saved = false;
-+                }, 3000);
++                }, 8080);
 +                // Refetch config after save to ensure UI matches server state
 +                this.fetchConfig();
 +            } catch (err) {

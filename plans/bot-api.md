@@ -201,7 +201,7 @@ HTTP Request (PATCH /api/config)
 - Create common response types for success/error responses
 
 **Acceptance Criteria**:
-- Server starts on configured API_PORT (default 8080)
+- Server starts on configured API_PORT (default 3001)
 - Server gracefully shuts down when context is cancelled
 - Requests without valid Bearer token return 401 Unauthorized
 - Requests exceeding rate limit return 429 Too Many Requests
@@ -398,13 +398,13 @@ Extend `ConfigManager` struct in `main.go`:
 **Flags**: `conformance` (match existing DISCORD_TOKEN pattern)
 
 **Requirements**:
-- Add API_PORT environment variable (default 8080)
+- Add API_PORT environment variable (default 3001)
 - Add API_BEARER_TOKEN environment variable (required if API enabled)
 - Add API_CORS_ORIGINS environment variable (optional, comma-separated list)
 - Add API_ENABLED environment variable (optional, default false)
 
 **Acceptance Criteria**:
-- API_PORT defaults to 8080 if not set
+- API_PORT defaults to 3001 if not set
 - API_BEARER_TOKEN is required when API_ENABLED=true
 - API_CORS_ORIGINS defaults to empty (no CORS) if not set
 - API_ENABLED defaults to false (API not started)
@@ -425,7 +425,7 @@ Extend `ConfigManager` struct in `main.go`:
 `main.go`:
 - Add environment variable reads in `main()` function alongside existing `DISCORD_TOKEN` and `CHANNEL_ID`
 - Add `API_ENABLED` (default "false") - if false, skip HTTP server start
-- Add `API_PORT` (default "8080") - HTTP server listen address
+- Add `API_PORT` (default "3001") - HTTP server listen address
 - Add `API_BEARER_TOKEN` (required if API_ENABLED=true) - Bearer token for auth
 - Add `API_CORS_ORIGINS` (optional, comma-separated) - CORS allowed origins
 - Add validation: if API_ENABLED=true and API_BEARER_TOKEN is empty, call `log.Fatalf`

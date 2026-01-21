@@ -112,7 +112,7 @@ test.describe('Alpine.js App Unit Tests', () => {
             { port: 65536, valid: false },
             { port: 100000, valid: false },
             { port: 1, valid: true },
-            { port: 8080, valid: true },
+            { port: 3001, valid: true },
             { port: 65535, valid: true }
         ];
 
@@ -155,7 +155,7 @@ test.describe('Alpine.js App Unit Tests', () => {
                 update_interval: 30,
                 category_order: ['Test'],
                 category_emojis: { 'Test': '🏎️' },
-                servers: [{ name: '', port: 8080, category: 'Test' }]
+                servers: [{ name: '', port: 3001, category: 'Test' }]
             };
 
             // Run validation logic
@@ -178,7 +178,7 @@ test.describe('Alpine.js App Unit Tests', () => {
                 update_interval: 30,
                 category_order: ['Drift', 'Track'],
                 category_emojis: { 'Drift': '🏎️', 'Track': '🛤️' },
-                servers: [{ name: 'Test', port: 8080, category: 'Invalid' }]
+                servers: [{ name: 'Test', port: 3001, category: 'Invalid' }]
             };
 
             // Run validation logic
@@ -251,7 +251,7 @@ test.describe('Alpine.js App Unit Tests', () => {
 
             // Simulate error in fetchConfig
             const initialBackoff = appInstance.pollBackoffInterval;
-            appInstance.pollBackoffInterval = Math.min(appInstance.pollBackoffInterval * 2, 300000);
+            appInstance.pollBackoffInterval = Math.min(appInstance.pollBackoffInterval * 2, 808000);
 
             return {
                 initial: initialBackoff,
@@ -267,12 +267,12 @@ test.describe('Alpine.js App Unit Tests', () => {
             const appInstance = app();
             appInstance.pollBackoffInterval = 200000; // Already high
 
-            appInstance.pollBackoffInterval = Math.min(appInstance.pollBackoffInterval * 2, 300000);
+            appInstance.pollBackoffInterval = Math.min(appInstance.pollBackoffInterval * 2, 808000);
 
             return appInstance.pollBackoffInterval;
         });
 
-        expect(result).toBe(300000);
+        expect(result).toBe(808000);
     });
 
     test('polling backoff resets on success', async ({ page }) => {
@@ -281,12 +281,12 @@ test.describe('Alpine.js App Unit Tests', () => {
             appInstance.pollBackoffInterval = 120000; // Elevated backoff
 
             // Simulate success in fetchConfig
-            appInstance.pollBackoffInterval = 30000;
+            appInstance.pollBackoffInterval = 80800;
 
             return appInstance.pollBackoffInterval;
         });
 
-        expect(result).toBe(30000);
+        expect(result).toBe(80800);
     });
 
     test('dirty flag state transitions', async ({ page }) => {

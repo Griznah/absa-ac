@@ -538,7 +538,7 @@ func TestValidateConfigStruct_InvalidPort(t *testing.T) {
 		{"way above maximum", 100000, true},
 		{"minimum valid", 1, false},
 		{"maximum valid", 65535, false},
-		{"common HTTP port", 8080, false},
+		{"common HTTP port", 3001, false},
 	}
 
 	for _, tc := range testCases {
@@ -654,25 +654,17 @@ func TestCheckAndReloadIfNeeded_ValidReload(t *testing.T) {
 	data, _ = json.Marshal(newConfig)
 	os.WriteFile(configPath, data, 0644)
 
-	// Trigger reload (schedules debounce)
+	// Trigger reload (synchronous with 5ms debounce)
 	err := cm.checkAndReloadIfNeeded()
 
 	if err != nil {
-		t.Fatalf("Expected successful reload scheduling, got error: %v", err)
+		t.Fatalf("Expected successful reload, got error: %v", err)
 	}
 
-	// Config should NOT be updated immediately (debounce pending)
-	if cm.GetConfig().ServerIP == "10.0.0.1" {
-		t.Error("Config should not be updated immediately after scheduling")
-	}
-
-	// Wait for debounce timer to fire
-	time.Sleep(150 * time.Millisecond)
-
-	// Config should be updated after debounce
+	// Config should be updated immediately after function returns (after 5ms debounce)
 	currentCfg := cm.GetConfig()
 	if currentCfg.ServerIP != "10.0.0.1" {
-		t.Errorf("Expected ServerIP '10.0.0.1' after debounce, got '%s'", currentCfg.ServerIP)
+		t.Errorf("Expected ServerIP '10.0.0.1' after reload, got '%s'", currentCfg.ServerIP)
 	}
 }
 
@@ -703,32 +695,18 @@ func TestCheckAndReloadIfNeeded_InvalidJSON(t *testing.T) {
 	// Store original config for comparison
 	originalIP := cm.GetConfig().ServerIP
 
-	// Trigger reload (schedules debounce)
-	// Note: checkAndReloadIfNeeded will return nil immediately (debounce scheduled)
-	// The error will occur in the background during performReload
+	// Trigger reload (synchronous with 5ms debounce)
+	// Error is returned immediately if reload fails
 	err := cm.checkAndReloadIfNeeded()
 
-	// With debouncing, the check returns immediately (error happens in background)
-	if err != nil {
-		t.Fatalf("Expected nil during scheduling, got: %v", err)
+	// Should get an error for invalid JSON
+	if err == nil {
+		t.Fatal("Expected error for invalid JSON, got nil")
 	}
 
-	// Config should remain unchanged immediately
+	// Config should remain unchanged after failed reload
 	if cm.GetConfig().ServerIP != originalIP {
-		t.Errorf("Config should not change immediately, got ServerIP: %s", cm.GetConfig().ServerIP)
-	}
-
-	// Wait for debounce timer to fire and reload to fail
-	time.Sleep(150 * time.Millisecond)
-
-	// Config should remain unchanged (reload failed)
-	currentCfg := cm.GetConfig()
-	if currentCfg == nil {
-		t.Fatal("Config should not be nil after failed reload")
-	}
-
-	if currentCfg.ServerIP != originalIP {
-		t.Errorf("Config should remain unchanged on invalid JSON, got ServerIP: %s", currentCfg.ServerIP)
+		t.Errorf("Config should remain unchanged on invalid JSON, got ServerIP: %s", cm.GetConfig().ServerIP)
 	}
 }
 
@@ -768,25 +746,18 @@ func TestCheckAndReloadIfNeeded_ValidationFailure(t *testing.T) {
 	// Store original config for comparison
 	originalIP := cm.GetConfig().ServerIP
 
-	// Trigger reload (schedules debounce)
+	// Trigger reload (synchronous with 5ms debounce)
+	// Error is returned immediately if reload fails
 	err := cm.checkAndReloadIfNeeded()
 
-	// With debouncing, returns immediately (error happens in background)
-	if err != nil {
-		t.Fatalf("Expected nil during scheduling, got: %v", err)
+	// Should get an error for validation failure
+	if err == nil {
+		t.Fatal("Expected error for validation failure, got nil")
 	}
 
-	// Wait for debounce timer to fire and reload to fail
-	time.Sleep(150 * time.Millisecond)
-
-	// Config should remain unchanged (reload failed)
-	currentCfg := cm.GetConfig()
-	if currentCfg == nil {
-		t.Fatal("Config should not be nil after failed reload")
-	}
-
-	if currentCfg.ServerIP != originalIP {
-		t.Errorf("Config should remain unchanged on validation failure, got ServerIP: %s", currentCfg.ServerIP)
+	// Config should remain unchanged after failed reload
+	if cm.GetConfig().ServerIP != originalIP {
+		t.Errorf("Config should remain unchanged on validation failure, got ServerIP: %s", cm.GetConfig().ServerIP)
 	}
 }
 
@@ -1232,9 +1203,6 @@ func TestIntegration_ConfigReloadWithBot(t *testing.T) {
 
 	cm := NewConfigManager(configPath, initialConfig)
 
-	// Simulate bot update cycle checking for config changes
-	initialIP := cm.GetConfig().ServerIP
-
 	// Wait to ensure different modification time
 	time.Sleep(10 * time.Millisecond)
 
@@ -1250,26 +1218,14 @@ func TestIntegration_ConfigReloadWithBot(t *testing.T) {
 	data, _ = json.Marshal(newConfig)
 	os.WriteFile(configPath, data, 0644)
 
-	// Simulate bot checking for config updates (schedules debounce)
+	// Simulate bot checking for config updates (synchronous with 5ms debounce)
 	err := cm.checkAndReloadIfNeeded()
 	if err != nil {
 		t.Fatalf("checkAndReloadIfNeeded failed: %v", err)
 	}
 
-	// Config should not change immediately (debounce pending)
-	if cm.GetConfig().ServerIP != initialIP {
-		t.Error("Config should not change immediately after scheduling")
-	}
-
-	// Wait for debounce timer to fire
-	time.Sleep(150 * time.Millisecond)
-
-	// Verify config was reloaded after debounce
+	// Config should be updated immediately after function returns
 	currentCfg := cm.GetConfig()
-	if currentCfg.ServerIP == initialIP {
-		t.Error("Config was not reloaded after debounce, ServerIP unchanged")
-	}
-
 	if currentCfg.ServerIP != "10.0.0.1" {
 		t.Errorf("Expected ServerIP '10.0.0.1' after reload, got '%s'", currentCfg.ServerIP)
 	}
@@ -1309,18 +1265,15 @@ func TestIntegration_InvalidConfigDuringRuntime(t *testing.T) {
 	data, _ = json.Marshal(invalidConfig)
 	os.WriteFile(configPath, data, 0644)
 
-	// Attempt reload (schedules debounce)
+	// Attempt reload (synchronous with 5ms debounce)
 	err := cm.checkAndReloadIfNeeded()
 
-	// With debouncing, returns immediately (error happens in background)
-	if err != nil {
-		t.Fatalf("Expected nil during scheduling, got: %v", err)
+	// Should get an error for invalid config
+	if err == nil {
+		t.Fatal("Expected error for invalid config, got nil")
 	}
 
-	// Wait for debounce timer to fire and reload to fail
-	time.Sleep(150 * time.Millisecond)
-
-	// Config should remain unchanged (reload failed)
+	// Config should remain unchanged after failed reload
 	currentCfg := cm.GetConfig()
 	if currentCfg == nil {
 		t.Fatal("Config should not be nil after failed reload")
@@ -1513,23 +1466,15 @@ func TestConfigManager_DebounceSingleWrite(t *testing.T) {
 	data, _ = json.Marshal(newConfig)
 	os.WriteFile(configPath, data, 0644)
 
-	// Trigger reload check (schedules debounce)
+	// Trigger reload check (synchronous with 5ms debounce)
 	err := cm.checkAndReloadIfNeeded()
 	if err != nil {
 		t.Fatalf("checkAndReloadIfNeeded failed: %v", err)
 	}
 
-	// Config should NOT be updated immediately (debounce pending)
-	if cm.GetConfig().ServerIP == "10.0.0.1" {
-		t.Error("Config should not be updated immediately after scheduling")
-	}
-
-	// Wait for debounce timer to fire
-	time.Sleep(150 * time.Millisecond)
-
-	// Now config should be updated
+	// Config should be updated immediately after function returns
 	if cm.GetConfig().ServerIP != "10.0.0.1" {
-		t.Errorf("Expected ServerIP '10.0.0.1' after debounce, got '%s'", cm.GetConfig().ServerIP)
+		t.Errorf("Expected ServerIP '10.0.0.1' after reload, got '%s'", cm.GetConfig().ServerIP)
 	}
 }
 
@@ -1575,136 +1520,18 @@ func TestConfigManager_DebounceRapidWrites(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	// Wait for debounce timer to fire
-	time.Sleep(150 * time.Millisecond)
-
 	// Config should reflect the LAST write (10.0.0.5)
-	// Only ONE reload should have occurred
 	if cm.GetConfig().ServerIP != "10.0.0.5" {
 		t.Errorf("Expected ServerIP '10.0.0.5' after rapid writes, got '%s'", cm.GetConfig().ServerIP)
 	}
 }
 
 // TestConfigManager_DebounceTimerReset tests that timer is reset on subsequent writes
-func TestConfigManager_DebounceTimerReset(t *testing.T) {
-	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "config.json")
+// TestConfigManager_DebounceTimerReset removed - async timer behavior no longer exists
+// The new synchronous 5ms debounce doesn't have timer reset behavior
 
-	initialConfig := &Config{
-		ServerIP:       "192.168.1.1",
-		UpdateInterval: 30,
-		CategoryOrder:  []string{"Drift"},
-		CategoryEmojis: map[string]string{"Drift": "🟣"},
-		Servers:        []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
-	}
-
-	data, _ := json.Marshal(initialConfig)
-	os.WriteFile(configPath, data, 0644)
-
-	cm := NewConfigManager(configPath, initialConfig)
-
-	// Wait to ensure different modification time
-	time.Sleep(10 * time.Millisecond)
-
-	// First write
-	newConfig := &Config{
-		ServerIP:       "10.0.0.1",
-		UpdateInterval: 30,
-		CategoryOrder:  []string{"Drift"},
-		CategoryEmojis: map[string]string{"Drift": "🟣"},
-		Servers:        []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
-	}
-
-	data, _ = json.Marshal(newConfig)
-	os.WriteFile(configPath, data, 0644)
-	cm.checkAndReloadIfNeeded()
-
-	// Wait 50ms (less than debounce delay)
-	time.Sleep(50 * time.Millisecond)
-
-	// Config should NOT be reloaded yet
-	if cm.GetConfig().ServerIP == "10.0.0.1" {
-		t.Error("Config should not be reloaded before debounce timer fires")
-	}
-
-	// Second write before first timer fires (resets timer)
-	newConfig.ServerIP = "10.0.0.2"
-	data, _ = json.Marshal(newConfig)
-	os.WriteFile(configPath, data, 0644)
-	cm.checkAndReloadIfNeeded()
-
-	// Wait another 50ms (still less than debounce delay from reset)
-	time.Sleep(50 * time.Millisecond)
-
-	// Config should STILL not be reloaded (timer was reset)
-	if cm.GetConfig().ServerIP == "10.0.0.2" {
-		t.Error("Config should not be reloaded before reset debounce timer fires")
-	}
-
-	// Wait for debounce timer to fire
-	time.Sleep(100 * time.Millisecond)
-
-	// Now config should be updated with LAST write
-	if cm.GetConfig().ServerIP != "10.0.0.2" {
-		t.Errorf("Expected ServerIP '10.0.0.2' after debounce reset, got '%s'", cm.GetConfig().ServerIP)
-	}
-}
-
-// TestConfigManager_CleanupStopsTimer tests that Cleanup stops debounce timer
-func TestConfigManager_CleanupStopsTimer(t *testing.T) {
-	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "config.json")
-
-	initialConfig := &Config{
-		ServerIP:       "192.168.1.1",
-		UpdateInterval: 30,
-		CategoryOrder:  []string{"Drift"},
-		CategoryEmojis: map[string]string{"Drift": "🟣"},
-		Servers:        []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
-	}
-
-	data, _ := json.Marshal(initialConfig)
-	os.WriteFile(configPath, data, 0644)
-
-	cm := NewConfigManager(configPath, initialConfig)
-
-	// Wait to ensure different modification time
-	time.Sleep(10 * time.Millisecond)
-
-	// Write new config
-	newConfig := &Config{
-		ServerIP:       "10.0.0.1",
-		UpdateInterval: 30,
-		CategoryOrder:  []string{"Drift"},
-		CategoryEmojis: map[string]string{"Drift": "🟣"},
-		Servers:        []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
-	}
-
-	data, _ = json.Marshal(newConfig)
-	os.WriteFile(configPath, data, 0644)
-
-	// Trigger reload check (schedules debounce)
-	cm.checkAndReloadIfNeeded()
-
-	// Immediately cleanup (should stop timer)
-	cm.Cleanup()
-
-	// Wait longer than debounce delay
-	time.Sleep(150 * time.Millisecond)
-
-	// Config should NOT be updated (timer was stopped)
-	if cm.GetConfig().ServerIP == "10.0.0.1" {
-		t.Error("Config should not be reloaded after Cleanup stops timer")
-	}
-
-	// Cleanup should be idempotent (calling multiple times is safe)
-	cm.Cleanup()
-	cm.Cleanup()
-
-	if cm.GetConfig().ServerIP != "192.168.1.1" {
-		t.Errorf("Config should remain unchanged after Cleanup, got ServerIP: %s", cm.GetConfig().ServerIP)
-	}
-}
+// TestConfigManager_CleanupStopsTimer removed - no timer to stop anymore
+// Cleanup is now a no-op since there's no async timer
 
 // TestConfigManager_CleanupConcurrentWithReload tests Cleanup during pending reload
 func TestConfigManager_CleanupConcurrentWithReload(t *testing.T) {
@@ -1802,14 +1629,12 @@ func TestConfigManager_DebounceWithInvalidConfig(t *testing.T) {
 	data, _ = json.Marshal(invalidConfig)
 	os.WriteFile(configPath, data, 0644)
 
-	// Trigger reload check (schedules debounce)
+	// Trigger reload check (synchronous with 5ms debounce)
+	// Error is returned immediately for invalid config
 	err := cm.checkAndReloadIfNeeded()
-	if err != nil {
-		t.Fatalf("checkAndReloadIfNeeded failed: %v", err)
+	if err == nil {
+		t.Fatal("Expected error for invalid config, got nil")
 	}
-
-	// Wait for debounce timer to fire and reload to fail
-	time.Sleep(150 * time.Millisecond)
 
 	// Config should remain unchanged (reload failed)
 	if cm.GetConfig().ServerIP != originalIP {
@@ -2090,14 +1915,12 @@ func TestConfigReload_InvalidConfigPreservesIPs(t *testing.T) {
 	data, _ = json.Marshal(invalidConfig)
 	os.WriteFile(configPath, data, 0644)
 
-	// Trigger reload (schedules debounce)
+	// Trigger reload (synchronous with 5ms debounce)
+	// Error is returned immediately for invalid config
 	err := cm.checkAndReloadIfNeeded()
-	if err != nil {
-		t.Fatalf("checkAndReloadIfNeeded failed: %v", err)
+	if err == nil {
+		t.Fatal("Expected error for invalid config, got nil")
 	}
-
-	// Wait for debounce and reload attempt
-	time.Sleep(150 * time.Millisecond)
 
 	// Config should remain unchanged with original IPs intact
 	cfg := cm.GetConfig()
@@ -2488,7 +2311,7 @@ func TestProxyServer_Startup(t *testing.T) {
 
 	// Set environment variables for API and proxy
 	os.Setenv("API_ENABLED", "true")
-	os.Setenv("API_PORT", "18080")
+	os.Setenv("API_PORT", "13001")
 	os.Setenv("API_BEARER_TOKEN", "test-token")
 	defer os.Unsetenv("API_ENABLED")
 	defer os.Unsetenv("API_PORT")
@@ -2497,10 +2320,10 @@ func TestProxyServer_Startup(t *testing.T) {
 	// Reset global variables with mutex protection
 	globalStateMutex.Lock()
 	apiEnabled = true
-	apiPort = "18080"
+	apiPort = "13001"
 	apiBearerToken = "test-token"
 	proxyEnabled = false // Will be set by startProxyServer test
-	proxyPort = "13000"
+	proxyPort = "18080"
 	globalStateMutex.Unlock()
 
 	// Create bot directly without starting Discord session
@@ -2514,7 +2337,7 @@ func TestProxyServer_Startup(t *testing.T) {
 
 	// Start proxy server
 	globalStateMutex.Lock()
-	proxyPort = "13000"
+	proxyPort = "18080"
 	globalStateMutex.Unlock()
 
 	if err := startProxyServer(bot, apiBearerToken, false, 10*time.Second); err != nil {
@@ -2596,7 +2419,7 @@ func TestProxyServer_DisabledFlag(t *testing.T) {
 	apiPort = "18081"
 	apiBearerToken = "test-token"
 	proxyEnabled = false
-	proxyPort = "3000"
+	proxyPort = "8080"
 	globalStateMutex.Unlock()
 
 	// Create bot directly without Discord session

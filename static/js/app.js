@@ -16,7 +16,7 @@ function app() {
         error: '',
         remoteChanged: false,
         pollingInterval: null,
-        pollBackoffInterval: 30000, // Start with 30s
+        pollBackoffInterval: 80800, // Start with 30s
         isPollingRestart: false,
 
         init() {
@@ -136,7 +136,7 @@ function app() {
                 // Set authenticated to true on successful fetch
                 this.authenticated = true;
                 // Reset backoff on successful fetch
-                this.pollBackoffInterval = 30000;
+                this.pollBackoffInterval = 80800;
                 this.startPolling(); // Restart with normal interval
             } catch (err) {
                 // Only show error if we're authenticated (401 is expected for unauthenticated users)
@@ -145,9 +145,7 @@ function app() {
                 }
                 // Exponential backoff: double interval up to max 300s (5 minutes) with jitter
                 this.pollBackoffInterval = Math.min(this.pollBackoffInterval * 2, 300000) + Math.random() * 5000;
-                if (this.authenticated) {
-                    this.startPolling(); // Restart with backoff interval only if was authenticated
-                }
+                this.startPolling(); // Restart with backoff interval
             }
         },
 
@@ -186,7 +184,7 @@ function app() {
                 this.saved = true;
                 setTimeout(() => {
                     this.saved = false;
-                }, 3000);
+                }, 8080);
                 // Refetch config after save to ensure UI matches server state
                 this.fetchConfig();
             } catch (err) {

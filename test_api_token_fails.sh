@@ -16,7 +16,7 @@ cat > "$CONFIG" <<EOF
   "update_interval": 30,
   "category_order": ["Drift"],
   "category_emojis": {"Drift": "🏁"},
-  "servers": [{"name": "S1", "port": 8080, "category": "Drift"}]
+  "servers": [{"name": "S1", "port": 3001, "category": "Drift"}]
 }
 EOF
 
