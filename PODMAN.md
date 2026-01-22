@@ -33,6 +33,31 @@ podman exec ac-discordbot whoami
 
 ### Configuration via Volume Mount
 
+**IMPORTANT** - Choose one of these two approaches:
+
+**Option A: Use `--userns=keep-id` (recommended - simplest)**
+
+```bash
+# Create config file
+mkdir -p config-dir
+cp config.json.example config-dir/config.json
+nano config-dir/config.json
+
+# Run with keep-id (your host UID maps to container)
+podman run -d \
+  --name ac-discordbot \
+  --userns=keep-id \
+  -e DISCORD_TOKEN="your_bot_token_here" \
+  -e CHANNEL_ID="your_channel_id" \
+  -v $(pwd)/config-dir:/data:ro \
+  --restart unless-stopped \
+  ac-discordbot
+```
+
+No chown needed! Your host user owns the file and that ownership propagates into the container.
+
+**Option B: Manual ownership setup (if not using keep-id)**
+
 The bot loads `config.json` from the data directory (`/data/`) at startup.
 Host can edit server configuration via volume mount without container rebuild.
 
@@ -43,11 +68,11 @@ mkdir -p /path/to/config
 cp config.json.example /path/to/config/config.json
 nano /path/to/config/config.json
 
-# Ensure non-root container user (UID 1001) can read
+# IMPORTANT: File must be owned by UID 1001 for container to read it
 sudo chown 1001:1001 /path/to/config/config.json
 sudo chmod 644 /path/to/config/config.json
 
-# Run with file mount
+# Run with file mount (read-only recommended)
 podman run -d \
   --name ac-discordbot \
   -e DISCORD_TOKEN="your_bot_token_here" \
@@ -57,16 +82,21 @@ podman run -d \
   ac-discordbot
 ```
 
-**Option 2: Mount working directory (for multiple config files)**
+**Note**: File mounts do not propagate modification time changes in some configurations. If hot reload doesn't work, use Option 2 (directory mount) instead.
+
+**Option 2: Mount working directory (better for hot reload)**
 ```bash
 # Create directory with config file inside
 mkdir -p /path/to/config
 cp config.json.example /path/to/config/config.json
 nano /path/to/config/config.json
+
+# IMPORTANT: Directory must be owned by UID 1001
 sudo chown -R 1001:1001 /path/to/config
 sudo chmod 755 /path/to/config
+sudo chmod 644 /path/to/config/config.json
 
-# Run with directory mount
+# Run with directory mount (read-only recommended)
 podman run -d \
   --name ac-discordbot \
   -e DISCORD_TOKEN="your_bot_token_here" \
@@ -75,6 +105,8 @@ podman run -d \
   --restart unless-stopped \
   ac-discordbot
 ```
+
+**Note**: Directory mounts properly propagate file modification time changes, enabling the hot reload feature to work as expected.
 
 The `:ro` flag makes the mount read-only for additional security. To edit configuration:
 1. Edit config file on host

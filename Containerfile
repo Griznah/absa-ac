@@ -22,12 +22,10 @@ WORKDIR /app
 COPY --from=builder /app/bot .
 COPY --chown=1001:1001 static ./static
 
-# Volume mount for config.json - host can edit configuration without container rebuild
-# Mount options:
-# 1) Single file: podman run -v /path/to/config.json:/data/config.json:ro ...
-# 2) Directory: podman run -v /path/to/config:/data:ro ... (contains config.json)
-# NOTE: VOLUME must be declared BEFORE chown, else ownership changes are discarded
-VOLUME /data
+# Config is mounted at runtime via:
+#   podman run -v ./config-dir:/data:ro ...
+# Use --userns=keep-id to map your host UID into the container (avoids ownership issues)
+# See PODMAN.md for detailed setup instructions.
 
 # Create non-root user and group
 RUN addgroup -g 1001 absabot && \
