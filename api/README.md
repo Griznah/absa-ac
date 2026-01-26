@@ -263,13 +263,16 @@ Respects graceful shutdown. Client disconnect should not continue processing. Se
 
 ## Error Handling
 
-### Response Format
-All errors return JSON with consistent structure:
-```json
-{
-  "error": "Short error message",
-  "details": "Optional detailed explanation"
-}
+### Starting the API Server
+
+The API server is controlled by environment variables:
+
+```bash
+# .env file
+API_ENABLED=true
+API_PORT=3001
+API_BEARER_TOKEN=your-secure-token-here
+API_CORS_ORIGINS=https://example.com,https://app.com
 ```
 
 ### Status Codes
@@ -291,33 +294,38 @@ Development: `"*"` wildcard for local testing
 Production: Explicit origin allowlist (e.g., `https://admin.example.com`)
 Never combine `"*"` with specific origins (ambiguous security policy)
 
-### Rate Limiting
-Default: 10 req/sec with burst of 20
-Per-IP limits prevent single-client DoS
-Memory-bounded via 5-minute expiration
-Health check bypasses rate limiting
+# Get current config
+curl -H "Authorization: Bearer $API_TOKEN" \
+  http://localhost:3001/api/config
 
-### Input Validation
-- JSON decode errors return 400 with specific message
-- Request size limited to 1MB before decode
-- Config validation happens in ConfigManager (non-fatal at runtime)
-- Context cancellation checked before processing
+# Get servers only
+curl -H "Authorization: Bearer $API_TOKEN" \
+  http://localhost:3001/api/config/servers
 
-### Timing Attack Prevention
-Token comparison uses constant-time algorithm. Response time does not reveal token match position. Prevents byte-by-byte guessing attacks.
+# Partial update (PATCH)
+curl -X PATCH \
+  -H "Authorization: Bearer $API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"update_interval": 120}' \
+  http://localhost:3001/api/config
 
-## Environment Variables
+# Full replacement (PUT)
+curl -X PUT \
+  -H "Authorization: Bearer $API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d @config.json \
+  http://localhost:3001/api/config
 
-| Variable | Description | Default | Required |
-| -------- | ----------- | ------- | -------- |
-| `API_ENABLED` | Enable API server | `false` | No |
-| `API_PORT` | HTTP listen port | `3001` | If API_ENABLED |
-| `API_BEARER_TOKEN` | Bearer token for authentication | - | If API_ENABLED |
-| `API_CORS_ORIGINS` | Comma-separated CORS allowlist | - | No |
-| `API_RATE_LIMIT` | Requests per second per IP | `10` | No |
-| `API_RATE_BURST` | Burst size per IP | `20` | No |
+# Validate without applying
+curl -X POST \
+  -H "Authorization: Bearer $API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d @config.json \
+  http://localhost:3001/api/config/validate
 
-## Graceful Shutdown
+# Health check (no auth required)
+curl http://localhost:3001/health
+```
 
 1. Context cancellation signal received
 2. HTTP server calls `Shutdown()` with 30-second timeout
