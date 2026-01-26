@@ -26,7 +26,7 @@ func generateConfig(numServers int) map[string]interface{} {
 		servers[i] = map[string]interface{}{
 			"name":     fmt.Sprintf("Server%d", i+1),
 			"ip":       "192.168.1.100",
-			"port":     8080 + i,
+			"port":     3001 + i,
 			"category": category,
 		}
 	}

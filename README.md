@@ -175,8 +175,8 @@ Set the following environment variables:
 # Enable the REST API server
 API_ENABLED=true
 
-# API server port (default: 8080)
-API_PORT=8080
+# API server port (default: 3001)
+API_PORT=3001
 
 # Bearer token for authentication (required if API_ENABLED=true)
 API_BEARER_TOKEN=your-secure-token-here
@@ -195,36 +195,36 @@ All endpoints (except `/health`) require Bearer token authentication:
 export API_TOKEN="your-secure-token-here"
 
 # Health check (no auth required)
-curl http://localhost:8080/health
+curl http://localhost:3001/health
 
 # Get current configuration
 curl -H "Authorization: Bearer $API_TOKEN" \
-  http://localhost:8080/api/config
+  http://localhost:3001/api/config
 
 # Get servers only
 curl -H "Authorization: Bearer $API_TOKEN" \
-  http://localhost:8080/api/config/servers
+  http://localhost:3001/api/config/servers
 
 # Partial update (PATCH) - merges with existing config
 curl -X PATCH \
   -H "Authorization: Bearer $API_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"update_interval": 120}' \
-  http://localhost:8080/api/config
+  http://localhost:3001/api/config
 
 # Full replacement (PUT) - replaces entire config
 curl -X PUT \
   -H "Authorization: Bearer $API_TOKEN" \
   -H "Content-Type: application/json" \
   -d @config.json \
-  http://localhost:8080/api/config
+  http://localhost:3001/api/config
 
 # Validate without applying
 curl -X POST \
   -H "Authorization: Bearer $API_TOKEN" \
   -H "Content-Type: application/json" \
   -d @config.json \
-  http://localhost:8080/api/config/validate
+  http://localhost:3001/api/config/validate
 ```
 
 ### API Features

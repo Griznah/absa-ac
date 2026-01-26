@@ -1152,7 +1152,7 @@ func main() {
 	apiEnabled = os.Getenv("API_ENABLED") == "true"
 	apiPort = os.Getenv("API_PORT")
 	if apiPort == "" {
-		apiPort = "8080" // Default port
+		apiPort = "3001" // Default port
 	}
 	apiBearerToken = os.Getenv("API_BEARER_TOKEN")
 	apiCorsOrigins = os.Getenv("API_CORS_ORIGINS")

@@ -514,7 +514,7 @@ func TestValidateConfigStruct_InvalidPort(t *testing.T) {
 		{"way above maximum", 100000, true},
 		{"minimum valid", 1, false},
 		{"maximum valid", 65535, false},
-		{"common HTTP port", 8080, false},
+		{"common HTTP port", 3001, false},
 	}
 
 	for _, tc := range testCases {

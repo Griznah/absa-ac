@@ -31,7 +31,7 @@ type ConfigManager interface {
 }
 
 // NewServer creates a new API server with the given config manager and configuration
-// Port is the listen address (e.g., "8080" for :8080)
+// Port is the listen address (e.g., "3001" for :3001)
 // Bearer token is required for all authenticated endpoints
 // CORS origins is a list of allowed origins (empty = no CORS, "*" = all)
 func NewServer(cm ConfigManager, port string, bearerToken string, corsOrigins []string, logger *log.Logger) *Server {

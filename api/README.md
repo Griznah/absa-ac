@@ -106,7 +106,7 @@ The API server is controlled by environment variables:
 ```bash
 # .env file
 API_ENABLED=true
-API_PORT=8080
+API_PORT=3001
 API_BEARER_TOKEN=your-secure-token-here
 API_CORS_ORIGINS=https://example.com,https://app.com
 ```
@@ -123,35 +123,35 @@ export API_TOKEN="your-secure-token-here"
 
 # Get current config
 curl -H "Authorization: Bearer $API_TOKEN" \
-  http://localhost:8080/api/config
+  http://localhost:3001/api/config
 
 # Get servers only
 curl -H "Authorization: Bearer $API_TOKEN" \
-  http://localhost:8080/api/config/servers
+  http://localhost:3001/api/config/servers
 
 # Partial update (PATCH)
 curl -X PATCH \
   -H "Authorization: Bearer $API_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"update_interval": 120}' \
-  http://localhost:8080/api/config
+  http://localhost:3001/api/config
 
 # Full replacement (PUT)
 curl -X PUT \
   -H "Authorization: Bearer $API_TOKEN" \
   -H "Content-Type: application/json" \
   -d @config.json \
-  http://localhost:8080/api/config
+  http://localhost:3001/api/config
 
 # Validate without applying
 curl -X POST \
   -H "Authorization: Bearer $API_TOKEN" \
   -H "Content-Type: application/json" \
   -d @config.json \
-  http://localhost:8080/api/config/validate
+  http://localhost:3001/api/config/validate
 
 # Health check (no auth required)
-curl http://localhost:8080/health
+curl http://localhost:3001/health
 ```
 
 ## Testing
