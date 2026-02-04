@@ -361,7 +361,7 @@ func RateLimit(requestsPerSecond int, burstSize int, trustedProxies []string, ct
 			// Check rate limit
 			if !rl.limiter.Allow() {
 				WriteError(w, http.StatusTooManyRequests, "Rate limit exceeded",
-					fmt.Sprintf("More than %d requests per second allowed", requestsPerSecond))
+					fmt.Sprintf("Maximum of %d requests per second allowed", requestsPerSecond))
 				return
 			}
 
@@ -377,18 +377,12 @@ func Logger(logger *log.Logger) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
 
-			// Redact Authorization header for logging
-			auth := r.Header.Get("Authorization")
-			if auth != "" {
-				r.Header.Set("Authorization", "Bearer <redacted>")
-			}
-
 			// Wrap response writer to capture status code
 			wrapped := &responseWriter{ResponseWriter: w, status: http.StatusOK}
 
 			next.ServeHTTP(wrapped, r)
 
-			// Log request
+			// Log request (method, path, status, duration - no headers logged)
 			duration := time.Since(start)
 			logger.Printf("%s %s - %d (%v)",
 				r.Method,

@@ -53,25 +53,27 @@ func NewServer(cm ConfigManager, port string, bearerToken string, corsOrigins []
 }
 
 // Start begins the HTTP server in a background goroutine
-// Blocks until the context is cancelled, then initiates graceful shutdown
-// Returns error if server fails to start (listen errors)
+// Blocks until the context is cancelled, then returns
+// Note: You must call Stop() separately to initiate graceful shutdown
+// Returns nil always (server errors are logged, not returned)
 func (s *Server) Start(ctx context.Context) error {
 	// Set up router with middleware
 	mux := http.NewServeMux()
 
-	// Apply middleware chain (order matters: outermost first)
+	// Apply middleware chain (order matters: innermost first)
+	// Execution order (outer to inner): SecurityHeaders → CORS → Logger → RateLimit → BearerAuth
 	securityHeadersMiddleware := SecurityHeaders()
 	corsMiddleware := CORS(s.corsOrigins)
-	authMiddleware := BearerAuth(s.bearerToken, s.trustedProxies)
-	rateLimitMiddleware := RateLimit(10, 20, s.trustedProxies, ctx) // 10 req/sec, burst 20
 	loggerMiddleware := Logger(s.logger)
+	rateLimitMiddleware := RateLimit(10, 20, s.trustedProxies, ctx) // 10 req/sec, burst 20
+	authMiddleware := BearerAuth(s.bearerToken, s.trustedProxies)
 
 	var handler http.Handler = mux
-	handler = securityHeadersMiddleware(handler)
-	handler = corsMiddleware(handler)
-	handler = loggerMiddleware(handler)
-	handler = rateLimitMiddleware(handler)
-	handler = authMiddleware(handler)
+	handler = authMiddleware(handler)           // Innermost: check auth first
+	handler = rateLimitMiddleware(handler)      // Apply rate limiting before auth
+	handler = loggerMiddleware(handler)         // Log after rate limiting
+	handler = corsMiddleware(handler)           // Handle CORS before security headers
+	handler = securityHeadersMiddleware(handler) // Outermost: security headers applied to all responses
 
 	s.httpServer.Handler = handler
 
