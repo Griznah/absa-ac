@@ -24,6 +24,10 @@ type Server struct {
 
 	// wg tracks graceful shutdown completion
 	wg sync.WaitGroup
+
+	// cancel is stored to allow Stop() to cancel the Start() context
+	cancel context.CancelFunc
+	cancelMu sync.Mutex
 }
 
 // ConfigManager defines the interface for accessing and modifying config
@@ -58,32 +62,35 @@ func NewServer(cm ConfigManager, port string, bearerToken string, corsOrigins []
 }
 
 // Start begins the HTTP server in a background goroutine
-// Blocks until the context is cancelled, then returns
-// Note: You must call Stop() separately to initiate graceful shutdown
-// Returns nil always (server errors are logged, not returned)
+// Blocks until Stop() is called, then performs graceful shutdown
+// Returns error if graceful shutdown fails
 func (s *Server) Start(ctx context.Context) error {
-	// MIME type configuration for .mjs module files (ES modules)
-	// Required for browsers to properly handle JavaScript modules
-	mime.AddExtensionType(".mjs", "application/javascript")
+	// Create a cancellable context for this server
+	// This allows Stop() to cancel it without needing access to the caller's context
+	serverCtx, serverCancel := context.WithCancel(ctx)
+
+	s.cancelMu.Lock()
+	s.cancel = serverCancel
+	s.cancelMu.Unlock()
 
 	// Set up router with middleware
 	mux := http.NewServeMux()
 
-	// Apply middleware chain (order matters: innermost first)
-	// Execution order (outer to inner): SecurityHeaders → CORS → Logger → RateLimit → BearerAuth
+	// Apply middleware chain (order matters: each middleware wraps the previous one)
+	// Execution order (outer to inner): SecurityHeaders → CORS → RateLimit → Logger → BearerAuth
 	securityHeadersMiddleware := SecurityHeaders()
 	// CORS: second layer (cross-origin checks before auth)
 	corsMiddleware := CORS(s.corsOrigins)
+	rateLimitMiddleware := RateLimit(10, 20, s.trustedProxies, serverCtx) // 10 req/sec, burst 20
 	loggerMiddleware := Logger(s.logger)
-	rateLimitMiddleware := RateLimit(10, 20, s.trustedProxies, ctx) // 10 req/sec, burst 20
 	authMiddleware := BearerAuth(s.bearerToken, s.trustedProxies)
 
 	var handler http.Handler = mux
-	handler = authMiddleware(handler)           // Innermost: check auth first
-	handler = rateLimitMiddleware(handler)      // Apply rate limiting before auth
-	handler = loggerMiddleware(handler)         // Log after rate limiting
-	handler = corsMiddleware(handler)           // Handle CORS before security headers
-	handler = securityHeadersMiddleware(handler) // Outermost: security headers applied to all responses
+	handler = authMiddleware(handler)                    // Innermost: check auth last
+	handler = loggerMiddleware(handler)                  // Log auth results
+	handler = rateLimitMiddleware(handler)               // Apply rate limiting before expensive auth
+	handler = corsMiddleware(handler)                    // Handle CORS preflight before rate limiting
+	handler = securityHeadersMiddleware(handler)         // Outermost: security headers applied to all responses
 
 	s.httpServer.Handler = handler
 
@@ -103,8 +110,20 @@ func (s *Server) Start(ctx context.Context) error {
 	}()
 
 	// Wait for context cancellation
-	<-ctx.Done()
+	<-serverCtx.Done()
 	s.logger.Println("Shutting down API server...")
+
+	// Initiate graceful shutdown
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := s.httpServer.Shutdown(shutdownCtx); err != nil {
+		return fmt.Errorf("API server shutdown failed: %w", err)
+	}
+
+	// Wait for server goroutine to finish
+	s.wg.Wait()
+	s.logger.Println("API server stopped")
 
 	return nil
 }
@@ -113,16 +132,14 @@ func (s *Server) Start(ctx context.Context) error {
 // Allows in-flight requests up to 30 seconds to complete
 // Called by main bot during shutdown sequence
 func (s *Server) Stop() error {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	if err := s.httpServer.Shutdown(ctx); err != nil {
-		return fmt.Errorf("API server shutdown failed: %w", err)
+	s.cancelMu.Lock()
+	if s.cancel != nil {
+		s.cancel()
 	}
+	s.cancelMu.Unlock()
 
-	// Wait for Start goroutine to finish
+	// Wait for Start goroutine to finish (which handles the shutdown)
 	s.wg.Wait()
-	s.logger.Println("API server stopped")
 
 	return nil
 }
