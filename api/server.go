@@ -81,8 +81,8 @@ func (s *Server) Start(ctx context.Context) error {
 
 	var handler http.Handler = mux
 	handler = authMiddleware(handler)                    // Innermost: check auth last
-	handler = loggerMiddleware(handler)                  // Log auth results
 	handler = rateLimitMiddleware(handler)               // Apply rate limiting before expensive auth
+	handler = loggerMiddleware(handler)                  // Log all requests including rate limited ones
 	handler = corsMiddleware(handler)                    // Handle CORS preflight before rate limiting
 	handler = securityHeadersMiddleware(handler)         // Outermost: security headers applied to all responses
 
