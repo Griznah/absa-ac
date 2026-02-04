@@ -44,7 +44,7 @@ func TestTimingIndependence(t *testing.T) {
 		},
 		{
 			name:       "Token matches middle chars only",
-			authHeader: "Bearer xxcret-tokenx", // Same length as "secret-token" (12 chars)
+			authHeader: "Bearer xecret-tokez", // Same length as "secret-token" (12 chars)
 		},
 		{
 			name:       "Token completely wrong",
