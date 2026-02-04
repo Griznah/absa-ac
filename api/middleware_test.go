@@ -950,14 +950,23 @@ func TestRateLimiterCleanup_PanicRecovery(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Create a manager that will panic during cleanup due to nil pointer dereference
+	// Create a manager with entries to trigger iteration
 	panicRm := &rateLimiterManager{
 		limiters: make(map[string]*rateLimiter),
 		ctx:      ctx,
 	}
 
-	// Add an entry with a nil rateLimiter to induce panic
-	// When cleanupStaleLimiters iterates and tries to access rl.lastAccess,
+	// Add some valid entries to ensure cleanup iterates
+	for i := 0; i < 5; i++ {
+		ip := fmt.Sprintf("192.168.1.%d", i)
+		panicRm.limiters[ip] = &rateLimiter{
+			limiter:     rate.NewLimiter(10, 5),
+			lastAccess:  time.Now().Add(-6 * time.Minute),
+		}
+	}
+
+	// Add an entry with a nil rateLimiter to induce panic during iteration
+	// When cleanupStaleLimiters collects keys and later accesses rl.lastAccess,
 	// it will dereference a nil pointer and panic
 	panicRm.limiters["127.0.0.1"] = nil
 

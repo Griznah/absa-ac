@@ -53,7 +53,7 @@ func TestServer_StartStop(t *testing.T) {
 			cm := &mockConfigManager{config: map[string]any{"test": "data"}}
 			s := NewServer(cm, tt.port, tt.token, []string{}, []string{}, logger)
 
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx := context.Background()
 
 			// Start server in background
 			startErr := make(chan error, 1)
@@ -68,7 +68,6 @@ func TestServer_StartStop(t *testing.T) {
 			resp, err := http.Get("http://localhost:" + tt.port + "/health")
 			if err != nil {
 				t.Errorf("Failed to connect to server: %v", err)
-				cancel()
 				// Ensure server is stopped even on error path
 				_ = s.Stop()
 				return
@@ -79,8 +78,7 @@ func TestServer_StartStop(t *testing.T) {
 				t.Errorf("Health check returned status %d, want %d", resp.StatusCode, http.StatusOK)
 			}
 
-			// Stop server
-			cancel()
+			// Stop server (Stop() handles cancellation internally)
 			err = s.Stop()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Server.Stop() error = %v, wantErr %v", err, tt.wantErr)
@@ -93,7 +91,7 @@ func TestServer_StartStop(t *testing.T) {
 					t.Errorf("Server.Start() returned error: %v", err)
 				}
 			case <-time.After(5 * time.Second):
-				t.Error("Server.Start() did not return after context cancellation")
+				t.Error("Server.Start() did not return after Stop() was called")
 			}
 		})
 	}
@@ -109,7 +107,7 @@ func TestServer_InFlightRequestsComplete(t *testing.T) {
 	}
 	s := NewServer(cm, "18081", "test-token", []string{}, []string{}, logger)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx := context.Background()
 
 	// Start server
 	go func() {
@@ -134,7 +132,6 @@ func TestServer_InFlightRequestsComplete(t *testing.T) {
 
 	// Give request time to start (but not complete - it needs 50ms), then stop server
 	time.Sleep(10 * time.Millisecond)
-	cancel()
 
 	if err := s.Stop(); err != nil {
 		t.Errorf("Server.Stop() error = %v", err)

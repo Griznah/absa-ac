@@ -99,24 +99,30 @@ func TestHandlers_GetConfig(t *testing.T) {
 
 func TestHandlers_PatchConfig(t *testing.T) {
 	tests := []struct {
-		name       string
-		body       string
-		wantStatus int
+		name            string
+		body            string
+		wantStatus      int
+		expectedUpdated map[string]interface{}
 	}{
 		{
 			name:       "Normal: Partial update merges changes",
 			body:       `{"update_interval": 120}`,
 			wantStatus: http.StatusOK,
+			expectedUpdated: map[string]interface{}{
+				"update_interval": float64(120),
+			},
 		},
 		{
-			name:       "Edge: Empty body returns 400",
-			body:       "",
-			wantStatus: http.StatusBadRequest,
+			name:            "Edge: Empty body returns 400",
+			body:            "",
+			wantStatus:      http.StatusBadRequest,
+			expectedUpdated: nil,
 		},
 		{
-			name:       "Edge: Invalid JSON returns 400",
-			body:       `{invalid json}`,
-			wantStatus: http.StatusBadRequest,
+			name:            "Edge: Invalid JSON returns 400",
+			body:            `{invalid json}`,
+			wantStatus:      http.StatusBadRequest,
+			expectedUpdated: nil,
 		},
 	}
 
@@ -124,7 +130,7 @@ func TestHandlers_PatchConfig(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			cm := &mockConfigManagerWithWrites{
 				config: map[string]interface{}{
-					"server_ip": "192.168.1.1",
+					"server_ip":       "192.168.1.1",
 					"update_interval": 60,
 				},
 			}
@@ -145,6 +151,25 @@ func TestHandlers_PatchConfig(t *testing.T) {
 
 			if rec.Code != tt.wantStatus {
 				t.Errorf("Status = %d, want %d", rec.Code, tt.wantStatus)
+			}
+
+			// Verify config was actually updated for success cases
+			if tt.wantStatus == http.StatusOK && tt.expectedUpdated != nil {
+				cfgMap, ok := cm.config.(map[string]interface{})
+				if !ok {
+					t.Errorf("Config is not a map after update")
+				}
+				for key, expectedValue := range tt.expectedUpdated {
+					actualValue, exists := cfgMap[key]
+					if !exists {
+						t.Errorf("Key %q not found in config after update", key)
+						continue
+					}
+					if actualValue != expectedValue {
+						t.Errorf("Config[%q] = %v (type %T), want %v (type %T)",
+							key, actualValue, actualValue, expectedValue, expectedValue)
+					}
+				}
 			}
 		})
 	}
