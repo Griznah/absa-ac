@@ -111,9 +111,12 @@ func setupTestEnvironment(t *testing.T, initialConfig map[string]interface{}) (*
 	const maxAttempts = 20
 	const pollInterval = 50 * time.Millisecond
 
+	// Use client with timeout to prevent hanging on stalled connections
+	healthClient := &http.Client{Timeout: 2 * time.Second}
+
 	var lastErr error
 	for attempt := 0; attempt < maxAttempts; attempt++ {
-		resp, err := http.Get(healthURL)
+		resp, err := healthClient.Get(healthURL)
 		if err == nil {
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
