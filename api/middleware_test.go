@@ -985,31 +985,32 @@ func TestRateLimiterCleanup_PanicRecovery(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	rm := &rateLimiterManager{
-		limiters: make(map[string]*rateLimiter),
-		ctx:      ctx,
-	}
-
-	// Create a manager that will panic during cleanup
+	// Create a manager that will panic during cleanup due to nil pointer dereference
 	panicRm := &rateLimiterManager{
 		limiters: make(map[string]*rateLimiter),
 		ctx:      ctx,
 	}
 
-	// Inject a condition that causes panic (nil map access)
-	panicRm.limiters = nil
+	// Add an entry with a nil rateLimiter to induce panic
+	// When cleanupStaleLimiters iterates and tries to access rl.lastAccess,
+	// it will dereference a nil pointer and panic
+	panicRm.limiters["127.0.0.1"] = nil
 
-	// This should panic but be recovered
-	func() {
-		defer func() {
-			if r := recover(); r != nil {
-				t.Log("Panic recovered as expected:", r)
-			}
-		}()
-		panicRm.cleanupStaleLimiters()
-	}()
+	// Call cleanupStaleLimiters - the panic will be recovered by the defer
+	// inside cleanupStaleLimiters itself, so it won't propagate here
+	// The panic will be logged via slog.Error with "rate_limit_cleanup_panic"
+	panicRm.cleanupStaleLimiters()
 
-	// Verify normal manager still works
+	// Verify the panic was handled gracefully - function returns without crashing
+	// The test passes if we reach this point without panicking
+	t.Log("Panic was recovered inside cleanupStaleLimiters as expected")
+
+	// Verify normal manager still works independently
+	rm := &rateLimiterManager{
+		limiters: make(map[string]*rateLimiter),
+		ctx:      ctx,
+	}
+
 	rm.mu.Lock()
 	rm.limiters["127.0.0.1"] = &rateLimiter{
 		limiter:     rate.NewLimiter(10, 5),
@@ -1024,7 +1025,7 @@ func TestRateLimiterCleanup_PanicRecovery(t *testing.T) {
 	rm.mu.RUnlock()
 
 	if exists {
-		t.Error("Stale limiter was not removed after panic recovery")
+		t.Error("Stale limiter was not removed after cleanup")
 	}
 }
 

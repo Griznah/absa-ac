@@ -4,6 +4,7 @@
 package api
 
 import (
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -35,19 +36,19 @@ func TestTimingIndependence(t *testing.T) {
 		},
 		{
 			name:       "Token matches first char only",
-			authHeader: "Bearer sxxxxxxxxxxxxxx",
+			authHeader: "Bearer sxxxxxxxxxxx", // Same length as "secret-token" (12 chars)
 		},
 		{
 			name:       "Token matches last char only",
-			authHeader: "Bearer xxxxxxxxxxxxxxxn",
+			authHeader: "Bearer xxxxxxxxxxxn", // Same length as "secret-token" (12 chars)
 		},
 		{
-			name:       "Short token (1 char)",
-			authHeader: "Bearer x",
+			name:       "Token matches middle chars only",
+			authHeader: "Bearer xxxcret-token", // Same length as "secret-token" (12 chars)
 		},
 		{
-			name:       "Long token (100 chars)",
-			authHeader: "Bearer " + string(make([]byte, 100)),
+			name:       "Token completely wrong",
+			authHeader: "Bearer wrong-ttttttt", // Same length as "secret-token" (12 chars)
 		},
 	}
 
@@ -94,8 +95,8 @@ func TestTimingIndependence(t *testing.T) {
 		}
 		variance /= float64(len(r.durs))
 
-		// Standard deviation
-		stdDev := time.Duration(variance)
+		// Standard deviation (square root of variance)
+		stdDev := time.Duration(math.Sqrt(variance))
 
 		// The variance should be within threshold
 		// Note: This test may be flaky due to scheduler noise, hence +build integration

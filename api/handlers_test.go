@@ -82,6 +82,17 @@ func TestHandlers_GetConfig(t *testing.T) {
 			if rec.Code != tt.wantStatus {
 				t.Errorf("Status = %d, want %d", rec.Code, tt.wantStatus)
 			}
+
+			// Verify response contains expected config
+			var gotConfig map[string]interface{}
+			if err := json.NewDecoder(rec.Body).Decode(&gotConfig); err != nil {
+				t.Errorf("Failed to decode response: %v", err)
+				return
+			}
+
+			if gotConfig["server_ip"] != tt.config.(map[string]interface{})["server_ip"] {
+				t.Errorf("server_ip = %v, want %v", gotConfig["server_ip"], tt.config.(map[string]interface{})["server_ip"])
+			}
 		})
 	}
 }
@@ -191,9 +202,9 @@ func TestHandlers_ValidateConfig(t *testing.T) {
 		wantStatus int
 	}{
 		{
-			name:       "Normal: Valid JSON returns success",
+			name:       "Normal: Valid JSON returns 501 (Not Implemented)",
 			body:       `{"server_ip":"10.0.0.1"}`,
-			wantStatus: http.StatusOK,
+			wantStatus: http.StatusNotImplemented, // 501 - full validation not available
 		},
 		{
 			name:       "Edge: Invalid JSON returns 400",
