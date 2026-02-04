@@ -93,7 +93,7 @@ func setupTestEnvironment(t *testing.T, initialConfig map[string]interface{}) (*
 	// Start HTTP server
 	port := "19080" // Use different port for E2E tests
 	bearerToken := "e2e-test-token"
-	cm.server = NewServer(cm, port, bearerToken, []string{}, log.New(os.Stdout, "E2E: ", log.LstdFlags))
+	cm.server = NewServer(cm, port, bearerToken, []string{}, []string{}, log.New(os.Stdout, "E2E: ", log.LstdFlags))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {

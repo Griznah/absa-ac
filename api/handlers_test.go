@@ -72,7 +72,7 @@ func TestHandlers_GetConfig(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cm := &mockConfigManagerWithWrites{config: tt.config}
-			s := NewServer(cm, "13001", "test-token", []string{}, log.New(os.Stdout, "TEST: ", log.LstdFlags))
+			s := NewServer(cm, "18080", "test-token", []string{}, []string{}, log.New(os.Stdout, "TEST: ", log.LstdFlags))
 
 			req := httptest.NewRequest("GET", "/api/config", nil)
 			rec := httptest.NewRecorder()
@@ -117,7 +117,7 @@ func TestHandlers_PatchConfig(t *testing.T) {
 					"update_interval": 60,
 				},
 			}
-			s := NewServer(cm, "13001", "test-token", []string{}, log.New(os.Stdout, "TEST: ", log.LstdFlags))
+			s := NewServer(cm, "18080", "test-token", []string{}, []string{}, log.New(os.Stdout, "TEST: ", log.LstdFlags))
 
 			var body string
 			if tt.body != "" {
@@ -162,7 +162,7 @@ func TestHandlers_PutConfig(t *testing.T) {
 			cm := &mockConfigManagerWithWrites{
 				config: map[string]interface{}{"server_ip": "192.168.1.1"},
 			}
-			s := NewServer(cm, "13001", "test-token", []string{}, log.New(os.Stdout, "TEST: ", log.LstdFlags))
+			s := NewServer(cm, "18080", "test-token", []string{}, []string{}, log.New(os.Stdout, "TEST: ", log.LstdFlags))
 
 			var body string
 			if tt.body != "" {
@@ -205,7 +205,7 @@ func TestHandlers_ValidateConfig(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cm := &mockConfigManagerWithWrites{}
-			s := NewServer(cm, "13001", "test-token", []string{}, log.New(os.Stdout, "TEST: ", log.LstdFlags))
+			s := NewServer(cm, "18080", "test-token", []string{}, []string{}, log.New(os.Stdout, "TEST: ", log.LstdFlags))
 
 			var body string
 			if tt.body != "" {
@@ -248,7 +248,7 @@ func TestHandlers_GetServers(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cm := &mockConfigManagerWithWrites{config: tt.config}
-			s := NewServer(cm, "13001", "test-token", []string{}, log.New(os.Stdout, "TEST: ", log.LstdFlags))
+			s := NewServer(cm, "18080", "test-token", []string{}, []string{}, log.New(os.Stdout, "TEST: ", log.LstdFlags))
 
 			req := httptest.NewRequest("GET", "/api/config/servers", nil)
 			rec := httptest.NewRecorder()

@@ -15,13 +15,12 @@ import (
 // Server manages the HTTP API for config management
 // Runs in separate goroutine from Discord bot, neither blocks the other
 type Server struct {
-	cm           ConfigManager
-	httpServer   *http.Server
-	logger       *log.Logger
-	bearerToken  string
-	corsOrigins  []string
-	rateLimit    int
-	rateBurst    int
+	cm             ConfigManager
+	httpServer     *http.Server
+	logger         *log.Logger
+	bearerToken    string
+	corsOrigins    []string
+	trustedProxies []string
 
 	// wg tracks graceful shutdown completion
 	wg sync.WaitGroup
@@ -39,27 +38,14 @@ type ConfigManager interface {
 // Port is the listen address (e.g., "3001" for :3001)
 // Bearer token is required for all authenticated endpoints
 // CORS origins is a list of allowed origins (empty = no CORS, "*" = all)
-// Rate limits read from env vars API_RATE_LIMIT (default 10) and API_RATE_BURST (default 20)
-func NewServer(cm ConfigManager, port string, bearerToken string, corsOrigins []string, logger *log.Logger) *Server {
-	// Read rate limit from environment (allows runtime configuration)
-	rateLimit := 10
-	rateBurst := 20
-	if val := os.Getenv("API_RATE_LIMIT"); val != "" {
-		if n, err := strconv.Atoi(val); err == nil && n > 0 {
-			rateLimit = n
-		}
-	}
-	if val := os.Getenv("API_RATE_BURST"); val != "" {
-		if n, err := strconv.Atoi(val); err == nil && n > 0 {
-			rateBurst = n
-		}
-	}
-
+// Trusted proxies is a list of proxy IPs to trust for X-Forwarded-For validation
+func NewServer(cm ConfigManager, port string, bearerToken string, corsOrigins []string, trustedProxies []string, logger *log.Logger) *Server {
 	return &Server{
-		cm:          cm,
-		bearerToken: bearerToken,
-		corsOrigins: corsOrigins,
-		logger:      logger,
+		cm:             cm,
+		bearerToken:    bearerToken,
+		corsOrigins:    corsOrigins,
+		trustedProxies: trustedProxies,
+		logger:         logger,
 		httpServer: &http.Server{
 			Addr:         ":" + port,
 			ReadTimeout:  15 * time.Second, // Prevents slow clients
@@ -87,7 +73,8 @@ func (s *Server) Start(ctx context.Context) error {
 	securityHeadersMiddleware := SecurityHeaders()
 	// CORS: second layer (cross-origin checks before auth)
 	corsMiddleware := CORS(s.corsOrigins)
-	// Logger: third layer (logs all requests)
+	authMiddleware := BearerAuth(s.bearerToken, s.trustedProxies)
+	rateLimitMiddleware := RateLimit(10, 20, s.trustedProxies, ctx) // 10 req/sec, burst 20
 	loggerMiddleware := Logger(s.logger)
 	// Rate limiting: fourth layer (throttling before expensive auth)
 	rateLimitMiddleware := RateLimit(s.rateLimit, s.rateBurst)

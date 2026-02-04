@@ -22,6 +22,7 @@ import (
 	"github.com/bombom/absa-ac/api"
 	"github.com/bombom/absa-ac/pkg/proxy"
 	"github.com/bwmarrin/discordgo"
+	"net"
 )
 
 // ================= SECURITY: STRONG TOKEN ENFORCEMENT =================
@@ -166,10 +167,14 @@ var (
 	apiBearerToken string
 	apiCorsOrigins string
 
-	// Proxy configuration flags (read from environment)
-	proxyEnabled         bool
-	proxyPort            string
-	proxyUpstreamTimeout time.Duration
+	// API configuration
+	apiEnabled         bool
+	apiPort            string
+	apiBearerToken     string
+	apiCorsOrigins     string
+	apiTrustedProxies  string
+	apiServer          *api.Server
+	apiServerCancel    context.CancelFunc
 )
 
 type Server struct {
@@ -1489,8 +1494,10 @@ func main() {
 	}
 	apiBearerToken = os.Getenv("API_BEARER_TOKEN")
 	apiCorsOrigins = os.Getenv("API_CORS_ORIGINS")
+	apiTrustedProxies = os.Getenv("API_TRUSTED_PROXY_IPS")
 
 	// Validate API configuration if enabled
+	var apiTrustedProxyList []string
 	if apiEnabled {
 		if !isStrongToken(apiBearerToken) {
 			log.Fatalf(`API_BEARER_TOKEN too weak or missing: must be at least 32 random characters, not default or placeholder.\nGenerate a strong token (command: head -c 48 /dev/urandom | base64) and place in .env as API_BEARER_TOKEN=your_token_here.`)
@@ -1519,7 +1526,41 @@ func main() {
 		if wildcardPresent && allowCorsAny {
 			log.Printf("[WARNING] ALLOW_CORS_ANY=true: API will run with wildcard ('*') origins. This is unsafe for production! Only use for local frontend development or testing.")
 		}
+
+		// Validate trusted proxy IPs if configured
+		if apiTrustedProxies != "" {
+			proxyList := strings.Split(apiTrustedProxies, ",")
+			apiTrustedProxyList = make([]string, 0, len(proxyList))
+
+			for _, proxyIP := range proxyList {
+				proxyIP = strings.TrimSpace(proxyIP)
+				if proxyIP == "" {
+					continue
+				}
+
+				// Validate IP format
+				ip := net.ParseIP(proxyIP)
+				if ip == nil {
+					log.Fatalf("Invalid trusted proxy IP address: %s", proxyIP)
+				}
+
+				// Normalize IP (convert IPv4-mapped IPv6 to IPv4)
+				normalizedIP := ip.String()
+				if ip.To4() != nil {
+					normalizedIP = ip.To4().String()
+				}
+
+				apiTrustedProxyList = append(apiTrustedProxyList, normalizedIP)
+				log.Printf("Trusted proxy added: %s", normalizedIP)
+			}
+		}
+
 		log.Printf("API server enabled on port %s with CORS origins: %s", apiPort, apiCorsOrigins)
+		if len(apiTrustedProxyList) > 0 {
+			log.Printf("Trusted proxies configured: %v", apiTrustedProxyList)
+		} else {
+			log.Println("No trusted proxies configured - X-Forwarded-For will be ignored (secure by default)")
+		}
 	}
 
 	// Read proxy configuration from environment
@@ -1595,6 +1636,19 @@ func main() {
 			log.Printf("Failed to start proxy server: %v", err)
 			log.Println("Continuing without proxy server...")
 		}
+
+		// Create API server
+		apiServer = api.NewServer(configManager, apiPort, apiBearerToken, corsOrigins, apiTrustedProxyList, log.Default())
+
+		// Start API server in background (handles graceful shutdown on context cancellation)
+		ctx, cancel := context.WithCancel(context.Background())
+		apiServerCancel = cancel
+
+		go func() {
+			if err := apiServer.Start(ctx); err != nil {
+				log.Printf("API server error: %v", err)
+			}
+		}()
 	}
 
 	// Wait for shutdown signal
