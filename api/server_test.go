@@ -47,7 +47,7 @@ func TestServer_StartStop(t *testing.T) {
 			logger := log.New(os.Stdout, "TEST: ", log.LstdFlags)
 
 			cm := &mockConfigManager{config: map[string]any{"test": "data"}}
-			s := NewServer(cm, tt.port, tt.token, []string{}, logger)
+			s := NewServer(cm, tt.port, tt.token, []string{}, []string{}, logger)
 
 			ctx, cancel := context.WithCancel(context.Background())
 
@@ -97,7 +97,7 @@ func TestServer_InFlightRequestsComplete(t *testing.T) {
 	logger := log.New(os.Stdout, "TEST: ", log.LstdFlags)
 
 	cm := &mockConfigManager{config: map[string]any{}}
-	s := NewServer(cm, "18081", "test-token", []string{}, logger)
+	s := NewServer(cm, "18081", "test-token", []string{}, []string{}, logger)
 
 	ctx, cancel := context.WithCancel(context.Background())
 

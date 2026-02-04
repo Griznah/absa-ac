@@ -237,6 +237,10 @@ curl -X POST \
 - **CORS support**: Configurable cross-origin requests for web applications
 - **Security headers**: X-Content-Type-Options, X-Frame-Options, CSP included
 
+### API Trusted Proxy IPs
+
+`API_TRUSTED_PROXY_IPS`: Comma-separated list of trusted proxy IP addresses (empty default). Required when deploying behind reverse proxy (nginx, AWS ALB, Cloudflare). Leave empty for direct internet exposure. See api/README.md for configuration details.
+
 ### Response Format
 
 Success responses:

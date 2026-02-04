@@ -12,11 +12,12 @@ import (
 // Server manages the HTTP API for config management
 // Runs in separate goroutine from Discord bot, neither blocks the other
 type Server struct {
-	cm           ConfigManager
-	httpServer   *http.Server
-	logger       *log.Logger
-	bearerToken  string
-	corsOrigins  []string
+	cm             ConfigManager
+	httpServer     *http.Server
+	logger         *log.Logger
+	bearerToken    string
+	corsOrigins    []string
+	trustedProxies []string
 
 	// wg tracks graceful shutdown completion
 	wg sync.WaitGroup
@@ -34,12 +35,14 @@ type ConfigManager interface {
 // Port is the listen address (e.g., "3001" for :3001)
 // Bearer token is required for all authenticated endpoints
 // CORS origins is a list of allowed origins (empty = no CORS, "*" = all)
-func NewServer(cm ConfigManager, port string, bearerToken string, corsOrigins []string, logger *log.Logger) *Server {
+// Trusted proxies is a list of proxy IPs to trust for X-Forwarded-For validation
+func NewServer(cm ConfigManager, port string, bearerToken string, corsOrigins []string, trustedProxies []string, logger *log.Logger) *Server {
 	return &Server{
-		cm:          cm,
-		bearerToken: bearerToken,
-		corsOrigins: corsOrigins,
-		logger:      logger,
+		cm:             cm,
+		bearerToken:    bearerToken,
+		corsOrigins:    corsOrigins,
+		trustedProxies: trustedProxies,
+		logger:         logger,
 		httpServer: &http.Server{
 			Addr:         ":" + port,
 			ReadTimeout:  15 * time.Second,
@@ -59,8 +62,8 @@ func (s *Server) Start(ctx context.Context) error {
 	// Apply middleware chain (order matters: outermost first)
 	securityHeadersMiddleware := SecurityHeaders()
 	corsMiddleware := CORS(s.corsOrigins)
-	authMiddleware := BearerAuth(s.bearerToken)
-	rateLimitMiddleware := RateLimit(10, 20) // 10 req/sec, burst 20
+	authMiddleware := BearerAuth(s.bearerToken, s.trustedProxies)
+	rateLimitMiddleware := RateLimit(10, 20, s.trustedProxies, ctx) // 10 req/sec, burst 20
 	loggerMiddleware := Logger(s.logger)
 
 	var handler http.Handler = mux

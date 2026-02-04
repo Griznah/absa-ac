@@ -19,6 +19,7 @@ import (
 
 	"github.com/bombom/absa-ac/api"
 	"github.com/bwmarrin/discordgo"
+	"net"
 )
 
 // ================= ENV LOADING =================
@@ -90,12 +91,13 @@ var (
 	channelID    string
 
 	// API configuration
-	apiEnabled      bool
-	apiPort         string
-	apiBearerToken  string
-	apiCorsOrigins  string
-	apiServer       *api.Server
-	apiServerCancel context.CancelFunc
+	apiEnabled         bool
+	apiPort            string
+	apiBearerToken     string
+	apiCorsOrigins     string
+	apiTrustedProxies  string
+	apiServer          *api.Server
+	apiServerCancel    context.CancelFunc
 )
 
 type Server struct {
@@ -1156,13 +1158,49 @@ func main() {
 	}
 	apiBearerToken = os.Getenv("API_BEARER_TOKEN")
 	apiCorsOrigins = os.Getenv("API_CORS_ORIGINS")
+	apiTrustedProxies = os.Getenv("API_TRUSTED_PROXY_IPS")
 
 	// Validate API configuration if enabled
+	var apiTrustedProxyList []string
 	if apiEnabled {
 		if apiBearerToken == "" {
 			log.Fatalf("API_ENABLED=true but API_BEARER_TOKEN is not set")
 		}
+
+		// Validate trusted proxy IPs if configured
+		if apiTrustedProxies != "" {
+			proxyList := strings.Split(apiTrustedProxies, ",")
+			apiTrustedProxyList = make([]string, 0, len(proxyList))
+
+			for _, proxyIP := range proxyList {
+				proxyIP = strings.TrimSpace(proxyIP)
+				if proxyIP == "" {
+					continue
+				}
+
+				// Validate IP format
+				ip := net.ParseIP(proxyIP)
+				if ip == nil {
+					log.Fatalf("Invalid trusted proxy IP address: %s", proxyIP)
+				}
+
+				// Normalize IP (convert IPv4-mapped IPv6 to IPv4)
+				normalizedIP := ip.String()
+				if ip.To4() != nil {
+					normalizedIP = ip.To4().String()
+				}
+
+				apiTrustedProxyList = append(apiTrustedProxyList, normalizedIP)
+				log.Printf("Trusted proxy added: %s", normalizedIP)
+			}
+		}
+
 		log.Printf("API server enabled on port %s with CORS origins: %s", apiPort, apiCorsOrigins)
+		if len(apiTrustedProxyList) > 0 {
+			log.Printf("Trusted proxies configured: %v", apiTrustedProxyList)
+		} else {
+			log.Println("No trusted proxies configured - X-Forwarded-For will be ignored (secure by default)")
+		}
 	}
 
 	token, channelID, err := validateConfig()
@@ -1208,7 +1246,7 @@ func main() {
 		}
 
 		// Create API server
-		apiServer = api.NewServer(configManager, apiPort, apiBearerToken, corsOrigins, log.Default())
+		apiServer = api.NewServer(configManager, apiPort, apiBearerToken, corsOrigins, apiTrustedProxyList, log.Default())
 
 		// Start API server in background (handles graceful shutdown on context cancellation)
 		ctx, cancel := context.WithCancel(context.Background())
