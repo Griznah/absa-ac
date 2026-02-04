@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -18,9 +20,80 @@ import (
 	"time"
 
 	"github.com/bombom/absa-ac/api"
+	"github.com/bombom/absa-ac/pkg/proxy"
 	"github.com/bwmarrin/discordgo"
-	"net"
 )
+
+// ================= SECURITY: STRONG TOKEN ENFORCEMENT =================
+// isStrongToken returns true if token meets strength requirements for REST API auth
+// - At least 32 chars
+// - Not a default/demo/test value
+// - Not all the same character
+func isStrongToken(token string) bool {
+	if len(token) < 32 {
+		return false
+	}
+	lowers := []string{"changeme-required", "changeme", "test", "token", "example", "123456", strings.Repeat("a", len(token)), strings.Repeat("1", len(token))}
+	t := strings.ToLower(token)
+	for _, lw := range lowers {
+		if t == lw {
+			return false
+		}
+	}
+	allSame := true
+	for i := range token {
+		if token[i] != token[0] {
+			allSame = false
+			break
+		}
+	}
+	if allSame {
+		return false
+	}
+	return true
+}
+
+// ================= SECRET REDACTION =================
+// RedactSecrets replaces secrets/patterns in logs with [REDACTED]
+func RedactSecrets(s string) string {
+	patterns := []string{
+		`(?i)(api[_-]?key|token|secret|bearer)["'=: ]+([a-zA-Z0-9\-_.:]+)`, // API_KEY=xxx, Bearer ...
+		`(?i)(password)["'=: ]+([a-zA-Z0-9\-_.:]+)`,                        // password fields
+	}
+	for _, pat := range patterns {
+		re := regexp.MustCompile(pat)
+		s = re.ReplaceAllStringFunc(s, func(m string) string {
+			// Only redact value part, not the key
+			parts := strings.SplitN(m, "=", 2)
+			if len(parts) == 2 {
+				return parts[0] + "=[REDACTED]"
+			}
+			colon := strings.SplitN(m, ":", 2)
+			if len(colon) == 2 {
+				return colon[0] + ": [REDACTED]"
+			}
+			space := strings.SplitN(m, " ", 2)
+			if len(space) == 2 {
+				return space[0] + " [REDACTED]"
+			}
+			return "[REDACTED]"
+		})
+	}
+	return s
+}
+
+type redactingWriter struct{ underlying io.Writer }
+
+func (rw *redactingWriter) Write(p []byte) (int, error) {
+	redacted := RedactSecrets(string(p))
+	_, err := rw.underlying.Write([]byte(redacted))
+	return len(p), err
+}
+
+// Call this at program start: makes all log.Print log.Printf secrets-safe
+func InstallRedactingLogger() {
+	log.SetOutput(&redactingWriter{underlying: os.Stderr})
+}
 
 // ================= ENV LOADING =================
 
@@ -87,17 +160,16 @@ func loadEnv() error {
 // ================= CONFIG =================
 
 var (
-	discordToken string
-	channelID    string
+	// API configuration flags (read from environment, stored in Bot struct)
+	apiEnabled     bool
+	apiPort        string
+	apiBearerToken string
+	apiCorsOrigins string
 
-	// API configuration
-	apiEnabled         bool
-	apiPort            string
-	apiBearerToken     string
-	apiCorsOrigins     string
-	apiTrustedProxies  string
-	apiServer          *api.Server
-	apiServerCancel    context.CancelFunc
+	// Proxy configuration flags (read from environment)
+	proxyEnabled         bool
+	proxyPort            string
+	proxyUpstreamTimeout time.Duration
 )
 
 type Server struct {
@@ -110,13 +182,11 @@ type Server struct {
 // ConfigManager provides thread-safe access to configuration with dynamic reload
 // Uses atomic.Value for lock-free reads (critical for performance during server polling)
 // Uses sync.RWMutex to serialize reload operations (rare writes vs frequent reads)
-// Debounces rapid file writes to prevent excessive reload attempts during editor save operations
 type ConfigManager struct {
-	config        atomic.Value // stores *Config
-	configPath    string
-	lastModTime   time.Time
-	mu            sync.RWMutex
-	debounceTimer *time.Timer // Timer for debouncing rapid file writes
+	config      atomic.Value // stores *Config
+	configPath  string
+	lastModTime time.Time
+	mu          sync.RWMutex
 }
 
 // NewConfigManager creates a new ConfigManager with an initial configuration
@@ -155,11 +225,10 @@ func (cm *ConfigManager) getLastModTime() (time.Time, error) {
 	return info.ModTime(), nil
 }
 
-// checkAndReloadIfNeeded checks if the config file has changed and schedules debounced reload
-// Returns nil immediately after scheduling (doesn't wait for reload to complete)
-// Debouncing prevents excessive reloads during rapid file writes (e.g., editor save operations)
-// Most text editors perform multiple write operations when saving files, causing multiple
-// file modification events. Without debouncing, each write would trigger a separate reload.
+// checkAndReloadIfNeeded checks if the config file has changed and reloads synchronously.
+// Uses a short 5ms debounce to batch rapid file writes (e.g., editor saves).
+// Returns after reload completes (or immediately if no change detected).
+// Holds the lock during the entire operation to prevent race conditions.
 func (cm *ConfigManager) checkAndReloadIfNeeded() error {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
@@ -175,39 +244,19 @@ func (cm *ConfigManager) checkAndReloadIfNeeded() error {
 		return nil
 	}
 
-	// File has changed, schedule debounced reload
-	// Stop any existing timer to reset debounce window on each new write
-	if cm.debounceTimer != nil {
-		cm.debounceTimer.Stop()
-	}
+	// File has changed, wait briefly to batch rapid writes
+	// Short debounce: wait 5ms for additional writes to settle
+	// This prevents excessive reloads during editor save operations
+	time.Sleep(5 * time.Millisecond)
 
-	// Create new timer that fires 100ms after last write
-	// If another write occurs within 100ms, this timer will be stopped and reset
-	cm.debounceTimer = time.AfterFunc(100*time.Millisecond, func() {
-		// Timer callback runs in separate goroutine
-		if err := cm.performReload(); err != nil {
-			log.Printf("Config reload failed: %v", err)
-		}
-	})
-
-	return nil
-}
-
-// performReload executes the actual config reload (load, validate, atomic swap)
-// Called by debounce timer after writes have settled
-// Logs errors but never crashes - bot continues with old config on reload failure
-func (cm *ConfigManager) performReload() error {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
-
-	// Double-check modification time (file might have changed again during debounce)
-	currentModTime, err := cm.getLastModTime()
+	// Re-check file modification time after debounce
+	currentModTime, err = cm.getLastModTime()
 	if err != nil {
 		return fmt.Errorf("failed to stat config file: %w", err)
 	}
 
-	// If file hasn't changed since last reload, skip
-	if currentModTime.Equal(cm.lastModTime) {
+	// If no change detected after debounce (file was written before our check), skip
+	if currentModTime.Equal(cm.lastModTime) || currentModTime.Before(cm.lastModTime) {
 		return nil
 	}
 
@@ -225,7 +274,6 @@ func (cm *ConfigManager) performReload() error {
 	}
 
 	// Initialize server IPs from global ServerIP setting.
-	// Must complete before atomic swap; readers see config via atomic.Value without locks.
 	initializeServerIPs(newCfg)
 
 	// Success: atomically swap config and update mod time
@@ -236,18 +284,11 @@ func (cm *ConfigManager) performReload() error {
 	return nil
 }
 
-// Cleanup stops the debounce timer and releases resources
-// Called during bot shutdown to prevent timer callbacks after shutdown
+// Cleanup releases resources
+// Called during bot shutdown
 // Safe to call multiple times (idempotent)
 func (cm *ConfigManager) Cleanup() {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
-
-	// Stop timer if running
-	if cm.debounceTimer != nil {
-		cm.debounceTimer.Stop()
-		cm.debounceTimer = nil
-	}
+	// No-op: no resources to clean up anymore
 }
 
 // WriteConfig writes a complete new configuration to disk with backup and atomic write
@@ -283,9 +324,10 @@ func (cm *ConfigManager) WriteConfig(newConfig *Config) error {
 		return fmt.Errorf("atomic write failed: %w", err)
 	}
 
-	// Update mod time to trigger reload
+	// Update mod time to trigger reload (must hold lock until complete)
+	// Moving touchConfigFile inside lock prevents race with reload
 	if err := cm.touchConfigFile(); err != nil {
-		log.Printf("Warning: failed to update config mod time: %v", err)
+		return fmt.Errorf("failed to update config mod time: %w", err)
 	}
 
 	return nil
@@ -341,7 +383,8 @@ func (cm *ConfigManager) UpdateConfig(partial map[string]interface{}) error {
 	return nil
 }
 
-// createBackup creates a backup of the current config file
+// createBackup creates a backup of the current config file with rotation
+// Implements 3-version backup rotation: .backup.1 (latest) -> .backup.2 -> .backup.3 (oldest)
 // Backup path is config.json.backup in same directory as config file
 // Returns nil if config file doesn't exist yet (first-time write)
 func (cm *ConfigManager) createBackup() error {
@@ -355,13 +398,48 @@ func (cm *ConfigManager) createBackup() error {
 		return err
 	}
 
-	// Write to backup file
-	backupPath := cm.configPath + ".backup"
-	if err := os.WriteFile(backupPath, data, 0644); err != nil {
-		return err
+	// Implement backup rotation: .backup.1 (latest) -> .backup.2 -> .backup.3 (oldest)
+	backupPaths := []string{
+		cm.configPath + ".backup.3", // Oldest - deleted first
+		cm.configPath + ".backup.2",
+		cm.configPath + ".backup.1",
+		cm.configPath + ".backup", // Current backup
 	}
 
-	log.Printf("Config backup created: %s", backupPath)
+	// Rotate: delete .backup.3 if exists
+	if _, err := os.Stat(backupPaths[0]); err == nil {
+		if err := os.Remove(backupPaths[0]); err != nil {
+			return fmt.Errorf("failed to remove %s: %w", backupPaths[0], err)
+		}
+	}
+
+	// Rotate: .backup.2 -> .backup.3
+	if _, err := os.Stat(backupPaths[1]); err == nil {
+		if err := os.Rename(backupPaths[1], backupPaths[0]); err != nil {
+			return fmt.Errorf("failed to rename %s -> %s: %w", backupPaths[1], backupPaths[0], err)
+		}
+	}
+
+	// Rotate: .backup.1 -> .backup.2
+	if _, err := os.Stat(backupPaths[2]); err == nil {
+		if err := os.Rename(backupPaths[2], backupPaths[1]); err != nil {
+			return fmt.Errorf("failed to rename %s -> %s: %w", backupPaths[2], backupPaths[1], err)
+		}
+	}
+
+	// Current -> .backup.1
+	if _, err := os.Stat(backupPaths[3]); err == nil {
+		if err := os.Rename(backupPaths[3], backupPaths[2]); err != nil {
+			return fmt.Errorf("failed to rename %s -> %s: %w", backupPaths[3], backupPaths[2], err)
+		}
+	}
+
+	// Write current config to .backup
+	if err := os.WriteFile(backupPaths[3], data, 0644); err != nil {
+		return fmt.Errorf("failed to write backup: %w", err)
+	}
+
+	log.Printf("Config backup rotated: %s (latest of 3 versions)", backupPaths[3])
 	return nil
 }
 
@@ -382,6 +460,7 @@ func (cm *ConfigManager) atomicWrite(data []byte) error {
 		if tmpFile != nil {
 			tmpFile.Close()
 			os.Remove(tmpPath)
+			log.Printf("Cleaned up temp file: %s", tmpPath)
 		}
 	}()
 
@@ -399,10 +478,13 @@ func (cm *ConfigManager) atomicWrite(data []byte) error {
 	if err := tmpFile.Close(); err != nil {
 		return err
 	}
-	tmpFile = nil // Defer cleanup will skip
+	tmpFile = nil // Prevent defer cleanup (file successfully closed)
 
 	// Atomic rename over target
 	if err := os.Rename(tmpPath, cm.configPath); err != nil {
+		// On rename error, tmpFile already closed but defer won't cleanup
+		// Manually clean up the orphaned temp file
+		os.Remove(tmpPath)
 		return err
 	}
 
@@ -487,6 +569,9 @@ func mergeMaps(dest, src map[string]interface{}) map[string]interface{} {
 			if destIsMap && srcIsMap {
 				// Recursive merge
 				result[k] = mergeMaps(destMap, srcMap)
+			} else if k == "servers" {
+				// Special handling for servers array: merge by name instead of replacing
+				result[k] = mergeServerArrays(destVal, v)
 			} else {
 				// Override with src value
 				result[k] = v
@@ -494,6 +579,85 @@ func mergeMaps(dest, src map[string]interface{}) map[string]interface{} {
 		} else {
 			// New key in src
 			result[k] = v
+		}
+	}
+
+	return result
+}
+
+// mergeServerArrays merges server arrays by name instead of replacing
+// Servers from partial update existing servers by name, new servers are appended
+// Preserves all dest servers unless explicitly updated/removed in src
+func mergeServerArrays(dest, src interface{}) interface{} {
+	destArray, destOk := dest.([]interface{})
+	srcArray, srcOk := src.([]interface{})
+
+	// If either is not an array, replace (fallback to original behavior)
+	if !destOk || !srcOk {
+		return src
+	}
+
+	// Build map of existing servers by name and track updated names
+	destServers := make(map[string]map[string]interface{})
+	updatedNames := make(map[string]bool)
+	for _, s := range destArray {
+		if serverMap, ok := s.(map[string]interface{}); ok {
+			if name, hasName := serverMap["name"].(string); hasName {
+				destServers[name] = serverMap
+			}
+		}
+	}
+
+	// Start with all dest servers (preserves servers not mentioned in src)
+	result := make([]interface{}, 0, len(destArray))
+	for _, s := range destArray {
+		serverMap, ok := s.(map[string]interface{})
+		if !ok {
+			result = append(result, s)
+			continue
+		}
+		if _, hasName := serverMap["name"].(string); hasName {
+			result = append(result, s)
+		} else {
+			result = append(result, s)
+		}
+	}
+
+	// Merge src servers: update existing, append new, preserve order from src
+	for _, s := range srcArray {
+		serverMap, ok := s.(map[string]interface{})
+		if !ok {
+			// Non-map entry, append as-is (edge case)
+			result = append(result, s)
+			continue
+		}
+
+		name, hasName := serverMap["name"].(string)
+		if !hasName {
+			// No name field, append as new (can't match existing)
+			result = append(result, s)
+			continue
+		}
+
+		// Check if server exists in dest
+		if existingServer, found := destServers[name]; found {
+			if !updatedNames[name] {
+				// First update: replace dest entry with merged version
+				// Find and replace in result
+				for i, r := range result {
+					if rMap, ok := r.(map[string]interface{}); ok {
+						if rName, ok := rMap["name"].(string); ok && rName == name {
+							result[i] = mergeMaps(existingServer, serverMap)
+							updatedNames[name] = true
+							break
+						}
+					}
+				}
+			}
+			// Already updated, skip duplicates in src
+		} else {
+			// New server, append
+			result = append(result, s)
 		}
 	}
 
@@ -592,6 +756,15 @@ type Bot struct {
 	configManager *ConfigManager
 	serverMessage *discordgo.Message
 	messageMutex  sync.RWMutex
+
+	// API server (optional - nil if disabled)
+	apiServer *api.Server
+	apiCancel context.CancelFunc
+
+	// Proxy server (optional - nil if disabled)
+	proxyServer *http.Server
+	proxyCancel context.CancelFunc
+	proxyStore  *proxy.SessionStore
 }
 
 // Config holds application configuration loaded from config.json
@@ -786,16 +959,19 @@ func fetchServerInfo(server Server) ServerInfo {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
+		log.Printf("Server '%s' failed to create request: %v", server.Name, err)
 		return offlineServerInfo(server)
 	}
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
+		log.Printf("Server '%s' (%s) request failed: %v", server.Name, url, err)
 		return offlineServerInfo(server)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		log.Printf("Server '%s' (%s) returned status %d", server.Name, url, resp.StatusCode)
 		return offlineServerInfo(server)
 	}
 
@@ -806,6 +982,7 @@ func fetchServerInfo(server Server) ServerInfo {
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		log.Printf("Server '%s' (%s) failed to decode response: %v", server.Name, url, err)
 		return offlineServerInfo(server)
 	}
 
@@ -813,6 +990,8 @@ func fetchServerInfo(server Server) ServerInfo {
 	if trackName == "." || trackName == "" {
 		trackName = "Unknown"
 	}
+
+	log.Printf("Server '%s' online: %s, players %d/%d", server.Name, trackName, data.Clients, data.MaxClients)
 
 	return ServerInfo{
 		Name:       server.Name,
@@ -1058,7 +1237,9 @@ func createDiscordSession(token string) (*discordgo.Session, error) {
 	return session, nil
 }
 
-func NewBot(cfgManager *ConfigManager, token, channelID string) (*Bot, error) {
+// NewBot creates a new Bot instance with Discord session and optional API server
+// Accepts dependencies via constructor injection (enables testing with mocks)
+func NewBot(cfgManager *ConfigManager, token, channelID string, apiEnabled bool, apiPort, apiBearerToken, apiCorsOrigins string) (*Bot, error) {
 	if token == "" {
 		return nil, fmt.Errorf("DISCORD_TOKEN environment variable not set")
 	}
@@ -1071,17 +1252,60 @@ func NewBot(cfgManager *ConfigManager, token, channelID string) (*Bot, error) {
 		return nil, err
 	}
 
+	bot := &Bot{
+		session:       session,
+		channelID:     channelID,
+		configManager: cfgManager,
+	}
+
+	// Create API server if enabled
+	if apiEnabled {
+		if apiBearerToken == "" {
+			return nil, fmt.Errorf("API_ENABLED=true but API_BEARER_TOKEN is not set")
+		}
+
+		// Parse CORS origins
+		var corsOrigins []string
+		if apiCorsOrigins != "" {
+			corsOrigins = strings.Split(apiCorsOrigins, ",")
+			// Trim whitespace from each origin
+			for i, origin := range corsOrigins {
+				corsOrigins[i] = strings.TrimSpace(origin)
+			}
+		}
+
+		bot.apiServer = api.NewServer(cfgManager, apiPort, apiBearerToken, corsOrigins, log.Default())
+		log.Printf("API server configured on port %s with CORS origins: %s", apiPort, apiCorsOrigins)
+	}
+
 	return &Bot{
 		session:       session,
 		channelID:     channelID,
 		configManager: cfgManager,
+		apiServer:     bot.apiServer,
 	}, nil
 }
 
+// Start launches the Discord bot and optional API server
+// Discord bot connects immediately, API server starts in background goroutine
 func (b *Bot) Start() error {
 	if err := b.session.Open(); err != nil {
 		return fmt.Errorf("failed to open Discord connection: %w", err)
 	}
+
+	// Start API server in background if configured
+	if b.apiServer != nil {
+		ctx, cancel := context.WithCancel(context.Background())
+		b.apiCancel = cancel
+
+		go func() {
+			if err := b.apiServer.Start(ctx); err != nil {
+				log.Printf("API server error: %v", err)
+			}
+		}()
+		log.Println("API server started")
+	}
+
 	return nil
 }
 
@@ -1092,11 +1316,26 @@ func (b *Bot) WaitForShutdown() {
 	<-sigchan
 	log.Println("Shutting down...")
 
+	// Stop proxy server if running
+	if b.proxyServer != nil && b.proxyCancel != nil {
+		log.Println("Stopping proxy server...")
+		b.proxyCancel()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := b.proxyServer.Shutdown(ctx); err != nil {
+			log.Printf("Error stopping proxy server: %v", err)
+		}
+		// Stop session cleanup
+		if b.proxyStore != nil {
+			b.proxyStore.StopBackgroundCleanup()
+		}
+	}
+
 	// Stop API server if running
-	if apiServer != nil && apiServerCancel != nil {
+	if b.apiServer != nil && b.apiCancel != nil {
 		log.Println("Stopping API server...")
-		apiServerCancel()
-		if err := apiServer.Stop(); err != nil {
+		b.apiCancel()
+		if err := b.apiServer.Stop(); err != nil {
 			log.Printf("Error stopping API server: %v", err)
 		}
 	}
@@ -1121,6 +1360,68 @@ func (b *Bot) checkForConfigUpdates() error {
 	return b.configManager.checkAndReloadIfNeeded()
 }
 
+// ================= PROXY SERVER =================
+
+// startProxyServer initializes and starts the proxy server in a background goroutine
+// Creates session store, sets up routes, and starts HTTP server on configured port
+// useHTTPS: controls whether session cookies are marked Secure (true if behind HTTPS termination)
+// upstreamTimeout: timeout for upstream API requests (configurable via PROXY_UPSTREAM_TIMEOUT)
+// Returns error if session store creation or server startup fails
+func startProxyServer(bot *Bot, bearerToken string, useHTTPS bool, upstreamTimeout time.Duration) error {
+	// Create session store with file-based persistence
+	sessionsDir := "./sessions"
+	store, err := proxy.NewSessionStore(sessionsDir)
+	if err != nil {
+		return fmt.Errorf("failed to create session store: %w", err)
+	}
+	bot.proxyStore = store
+
+	// Build bot API URL for proxy upstream
+	botAPIURL := fmt.Sprintf("http://localhost:%s", apiPort)
+
+	// Setup proxy routes
+	mux := http.NewServeMux()
+
+	// Static file server for web UI (served from root path "/")
+	// Files are served directly from ./static directory
+	// Security: http.FileServer prevents directory traversal attacks
+	staticDir := "./static"
+	if _, err := os.Stat(staticDir); err == nil {
+		// Serve static files at root path (/, /css/styles.css, /js/app.js, etc.)
+		mux.Handle("/", http.FileServer(http.Dir(staticDir)))
+		log.Printf("Proxy serving static files from %s at root path", staticDir)
+	} else {
+		log.Printf("Warning: static directory not found at %s", staticDir)
+	}
+
+	// Auth endpoints
+	mux.HandleFunc("/login", proxy.LoginHandler(store, botAPIURL, useHTTPS, upstreamTimeout))
+	mux.HandleFunc("/logout", proxy.LogoutHandler(store, useHTTPS))
+
+	// API endpoints (authenticated with CSRF, proxied to backend)
+	proxyHandler := proxy.CSRFMiddleware(proxy.ProxyHandler(botAPIURL, store, upstreamTimeout), store)
+	mux.Handle("/api/", proxyHandler)
+
+	// Create HTTP server
+	bot.proxyServer = &http.Server{
+		Addr:    ":" + proxyPort,
+		Handler: mux,
+	}
+
+	// Start server in background goroutine
+	bot.proxyCancel = func() {}
+
+	go func() {
+		log.Printf("Proxy server listening on port %s", proxyPort)
+		if err := bot.proxyServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Printf("Proxy server error: %v", err)
+		}
+	}()
+
+	log.Printf("Proxy server started on port %s", proxyPort)
+	return nil
+}
+
 // ================= MAIN =================
 
 func validateConfig() (token, channelID string, err error) {
@@ -1137,8 +1438,38 @@ func validateConfig() (token, channelID string, err error) {
 	return token, channelID, nil
 }
 
+func checkNotRootUser() {
+	if os.Geteuid() == 0 {
+		log.Fatalf("SECURITY: Container must not run as root! UID 0 detected. Please rebuild or run with --user/-u flag (see README). Refusing to start.")
+	}
+}
+
+func checkFilePerm(path string, want os.FileMode, require bool) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		if require {
+			log.Fatalf("SECURITY: Required config/file %s missing: %v", path, err)
+		} else {
+			log.Printf("[WARNING] File/directory %s not found: %v", path, err)
+		}
+		return
+	}
+	mode := fi.Mode().Perm()
+	if mode != want {
+		msg := fmt.Sprintf("SECURITY: %s permissions %o (want %o)", path, mode, want)
+		if require {
+			log.Fatalf("%s", msg)
+		} else {
+			log.Printf("[WARNING] %s", msg)
+		}
+	}
+}
+
 func main() {
+	InstallRedactingLogger()
 	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
+
+	checkNotRootUser()
 
 	// Parse command-line flags for config path
 	configPath := flag.String("c", "", "Path to config.json file")
@@ -1158,57 +1489,82 @@ func main() {
 	}
 	apiBearerToken = os.Getenv("API_BEARER_TOKEN")
 	apiCorsOrigins = os.Getenv("API_CORS_ORIGINS")
-	apiTrustedProxies = os.Getenv("API_TRUSTED_PROXY_IPS")
 
 	// Validate API configuration if enabled
-	var apiTrustedProxyList []string
 	if apiEnabled {
-		if apiBearerToken == "" {
-			log.Fatalf("API_ENABLED=true but API_BEARER_TOKEN is not set")
+		if !isStrongToken(apiBearerToken) {
+			log.Fatalf(`API_BEARER_TOKEN too weak or missing: must be at least 32 random characters, not default or placeholder.\nGenerate a strong token (command: head -c 48 /dev/urandom | base64) and place in .env as API_BEARER_TOKEN=your_token_here.`)
 		}
 
-		// Validate trusted proxy IPs if configured
-		if apiTrustedProxies != "" {
-			proxyList := strings.Split(apiTrustedProxies, ",")
-			apiTrustedProxyList = make([]string, 0, len(proxyList))
-
-			for _, proxyIP := range proxyList {
-				proxyIP = strings.TrimSpace(proxyIP)
-				if proxyIP == "" {
-					continue
-				}
-
-				// Validate IP format
-				ip := net.ParseIP(proxyIP)
-				if ip == nil {
-					log.Fatalf("Invalid trusted proxy IP address: %s", proxyIP)
-				}
-
-				// Normalize IP (convert IPv4-mapped IPv6 to IPv4)
-				normalizedIP := ip.String()
-				if ip.To4() != nil {
-					normalizedIP = ip.To4().String()
-				}
-
-				apiTrustedProxyList = append(apiTrustedProxyList, normalizedIP)
-				log.Printf("Trusted proxy added: %s", normalizedIP)
+		allowCorsAny := strings.ToLower(os.Getenv("ALLOW_CORS_ANY")) == "true"
+		origins := []string{}
+		if apiCorsOrigins != "" {
+			for _, o := range strings.Split(apiCorsOrigins, ",") {
+				origins = append(origins, strings.TrimSpace(o))
 			}
 		}
-
-		log.Printf("API server enabled on port %s with CORS origins: %s", apiPort, apiCorsOrigins)
-		if len(apiTrustedProxyList) > 0 {
-			log.Printf("Trusted proxies configured: %v", apiTrustedProxyList)
-		} else {
-			log.Println("No trusted proxies configured - X-Forwarded-For will be ignored (secure by default)")
+		wildcardPresent := false
+		for _, o := range origins {
+			if o == "*" {
+				wildcardPresent = true
+				break
+			}
 		}
+		if wildcardPresent && len(origins) > 1 {
+			log.Fatalf("CORS configuration error: wildcard '*' cannot be combined with specific origins. If you want dev mode, set only '*' or only allowlist. See README.md for details.")
+		}
+		if wildcardPresent && !allowCorsAny {
+			log.Fatalf("CORS security error: In production, you MUST provide an explicit allowlist via API_CORS_ORIGINS. Wildcard '*' is forbidden unless ALLOW_CORS_ANY=true for dev/test. See README.md for secure config instructions.")
+		}
+		if wildcardPresent && allowCorsAny {
+			log.Printf("[WARNING] ALLOW_CORS_ANY=true: API will run with wildcard ('*') origins. This is unsafe for production! Only use for local frontend development or testing.")
+		}
+		log.Printf("API server enabled on port %s with CORS origins: %s", apiPort, apiCorsOrigins)
+	}
+
+	// Read proxy configuration from environment
+	proxyEnabled = os.Getenv("PROXY_ENABLED") == "true"
+	proxyPort = os.Getenv("PROXY_PORT")
+	if proxyPort == "" {
+		proxyPort = "3001" // Default port
+	}
+	// Default to HTTPS for production security. Set PROXY_HTTPS=false to disable (not recommended).
+	proxyHTTPS := os.Getenv("PROXY_HTTPS") != "false"
+
+	// Parse upstream timeout (default 10 seconds, max 60 seconds)
+	const maxUpstreamTimeout = 60 * time.Second
+	if timeoutStr := os.Getenv("PROXY_UPSTREAM_TIMEOUT"); timeoutStr != "" {
+		var err error
+		proxyUpstreamTimeout, err = time.ParseDuration(timeoutStr)
+		if err != nil {
+			log.Fatalf("Invalid PROXY_UPSTREAM_TIMEOUT value '%s': %v", timeoutStr, err)
+		}
+		if proxyUpstreamTimeout > maxUpstreamTimeout {
+			log.Fatalf("PROXY_UPSTREAM_TIMEOUT exceeds maximum of %v", maxUpstreamTimeout)
+		}
+	} else {
+		proxyUpstreamTimeout = 10 * time.Second
+	}
+
+	// Validate proxy configuration if enabled
+	if proxyEnabled {
+		if apiBearerToken == "" {
+			log.Fatalf("PROXY_ENABLED=true but API_BEARER_TOKEN is not set (proxy uses same token)")
+		}
+		if !apiEnabled {
+			log.Fatalf("PROXY_ENABLED=true but API_ENABLED=false (proxy requires bot API)")
+		}
+		httpsStatus := "HTTP"
+		if proxyHTTPS {
+			httpsStatus = "HTTPS"
+		}
+		log.Printf("Proxy server enabled on port %s (%s mode - cookies Secure=%v, upstream timeout=%v)", proxyPort, httpsStatus, proxyHTTPS, proxyUpstreamTimeout)
 	}
 
 	token, channelID, err := validateConfig()
 	if err != nil {
 		log.Fatalf("Configuration error: %v", err)
 	}
-
-	discordToken = token
 
 	// Load and validate config.json
 	cfg, err := loadConfig(*configPath)
@@ -1222,7 +1578,7 @@ func main() {
 
 	// Create config manager with initial config
 	configManager := NewConfigManager(getConfigPath(*configPath), cfg)
-	bot, err := NewBot(configManager, token, channelID)
+	bot, err := NewBot(configManager, token, channelID, apiEnabled, apiPort, apiBearerToken, apiCorsOrigins)
 	if err != nil {
 		log.Fatalf("Failed to create bot: %v", err)
 	}
@@ -1233,30 +1589,12 @@ func main() {
 		log.Fatalf("Failed to start bot: %v", err)
 	}
 
-	// Start API server if enabled
-	if apiEnabled {
-		// Parse CORS origins
-		var corsOrigins []string
-		if apiCorsOrigins != "" {
-			corsOrigins = strings.Split(apiCorsOrigins, ",")
-			// Trim whitespace from each origin
-			for i, origin := range corsOrigins {
-				corsOrigins[i] = strings.TrimSpace(origin)
-			}
+	// Start proxy server if enabled
+	if proxyEnabled {
+		if err := startProxyServer(bot, apiBearerToken, proxyHTTPS, proxyUpstreamTimeout); err != nil {
+			log.Printf("Failed to start proxy server: %v", err)
+			log.Println("Continuing without proxy server...")
 		}
-
-		// Create API server
-		apiServer = api.NewServer(configManager, apiPort, apiBearerToken, corsOrigins, apiTrustedProxyList, log.Default())
-
-		// Start API server in background (handles graceful shutdown on context cancellation)
-		ctx, cancel := context.WithCancel(context.Background())
-		apiServerCancel = cancel
-
-		go func() {
-			if err := apiServer.Start(ctx); err != nil {
-				log.Printf("API server error: %v", err)
-			}
-		}()
 	}
 
 	// Wait for shutdown signal

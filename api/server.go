@@ -4,7 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"mime"
 	"net/http"
+	"os"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -12,19 +15,16 @@ import (
 // Server manages the HTTP API for config management
 // Runs in separate goroutine from Discord bot, neither blocks the other
 type Server struct {
-	cm             ConfigManager
-	httpServer     *http.Server
-	logger         *log.Logger
-	bearerToken    string
-	corsOrigins    []string
-	trustedProxies []string
+	cm           ConfigManager
+	httpServer   *http.Server
+	logger       *log.Logger
+	bearerToken  string
+	corsOrigins  []string
+	rateLimit    int
+	rateBurst    int
 
 	// wg tracks graceful shutdown completion
 	wg sync.WaitGroup
-
-	// cancel is stored to allow Stop() to cancel the Start() context
-	cancel context.CancelFunc
-	cancelMu sync.Mutex
 }
 
 // ConfigManager defines the interface for accessing and modifying config
@@ -39,52 +39,70 @@ type ConfigManager interface {
 // Port is the listen address (e.g., "3001" for :3001)
 // Bearer token is required for all authenticated endpoints
 // CORS origins is a list of allowed origins (empty = no CORS, "*" = all)
-// Trusted proxies is a list of proxy IPs to trust for X-Forwarded-For validation
-func NewServer(cm ConfigManager, port string, bearerToken string, corsOrigins []string, trustedProxies []string, logger *log.Logger) *Server {
+// Rate limits read from env vars API_RATE_LIMIT (default 10) and API_RATE_BURST (default 20)
+func NewServer(cm ConfigManager, port string, bearerToken string, corsOrigins []string, logger *log.Logger) *Server {
+	// Read rate limit from environment (allows runtime configuration)
+	rateLimit := 10
+	rateBurst := 20
+	if val := os.Getenv("API_RATE_LIMIT"); val != "" {
+		if n, err := strconv.Atoi(val); err == nil && n > 0 {
+			rateLimit = n
+		}
+	}
+	if val := os.Getenv("API_RATE_BURST"); val != "" {
+		if n, err := strconv.Atoi(val); err == nil && n > 0 {
+			rateBurst = n
+		}
+	}
+
 	return &Server{
-		cm:             cm,
-		bearerToken:    bearerToken,
-		corsOrigins:    corsOrigins,
-		trustedProxies: trustedProxies,
-		logger:         logger,
+		cm:          cm,
+		bearerToken: bearerToken,
+		corsOrigins: corsOrigins,
+		logger:      logger,
 		httpServer: &http.Server{
 			Addr:         ":" + port,
-			ReadTimeout:  15 * time.Second,
-			WriteTimeout: 15 * time.Second,
+			ReadTimeout:  15 * time.Second, // Prevents slow clients
+			WriteTimeout: 15 * time.Second, // Prevents slow clients
 			IdleTimeout:  60 * time.Second,
 		},
+		rateLimit: rateLimit,
+		rateBurst: rateBurst,
 	}
 }
 
 // Start begins the HTTP server in a background goroutine
-// Blocks until Stop() is called, then performs graceful shutdown
-// Returns error if graceful shutdown fails
+// Blocks until the context is cancelled, then initiates graceful shutdown
+// Returns error if server fails to start (listen errors)
 func (s *Server) Start(ctx context.Context) error {
-	// Create a cancellable context for this server
-	// This allows Stop() to cancel it without needing access to the caller's context
-	serverCtx, serverCancel := context.WithCancel(ctx)
-
-	s.cancelMu.Lock()
-	s.cancel = serverCancel
-	s.cancelMu.Unlock()
+	// MIME type configuration for .mjs module files (ES modules)
+	// Required for browsers to properly handle JavaScript modules
+	mime.AddExtensionType(".mjs", "application/javascript")
 
 	// Set up router with middleware
 	mux := http.NewServeMux()
 
-	// Apply middleware chain (order matters: each middleware wraps the previous one)
-	// Execution order (outer to inner): SecurityHeaders → CORS → RateLimit → Logger → BearerAuth
+	// Apply middleware chain (order matters: outermost first)
+	// Security headers: outermost (applies to all responses even on error)
 	securityHeadersMiddleware := SecurityHeaders()
+	// CORS: second layer (cross-origin checks before auth)
 	corsMiddleware := CORS(s.corsOrigins)
-	rateLimitMiddleware := RateLimit(10, 20, s.trustedProxies, serverCtx) // 10 req/sec, burst 20
+	// Logger: third layer (logs all requests)
 	loggerMiddleware := Logger(s.logger)
-	authMiddleware := BearerAuth(s.bearerToken, s.trustedProxies)
+	// Rate limiting: fourth layer (throttling before expensive auth)
+	rateLimitMiddleware := RateLimit(s.rateLimit, s.rateBurst)
+	// Auth: fifth layer (validates Bearer token)
+	authMiddleware := BearerAuth(s.bearerToken)
+	// CSRF: sixth layer (validates CSRF token for state-changing requests)
+	csrfMiddleware := CSRF
 
 	var handler http.Handler = mux
-	handler = authMiddleware(handler)                    // Innermost: check auth last
-	handler = rateLimitMiddleware(handler)               // Apply rate limiting before expensive auth
-	handler = loggerMiddleware(handler)                  // Log all requests including rate limited ones
-	handler = corsMiddleware(handler)                    // Handle CORS preflight before rate limiting
-	handler = securityHeadersMiddleware(handler)         // Outermost: security headers applied to all responses
+	handler = securityHeadersMiddleware(handler)
+	handler = corsMiddleware(handler)
+	handler = loggerMiddleware(handler)
+	handler = rateLimitMiddleware(handler)
+	handler = authMiddleware(handler)
+	handler = csrfMiddleware(handler)
 
 	s.httpServer.Handler = handler
 
@@ -104,20 +122,8 @@ func (s *Server) Start(ctx context.Context) error {
 	}()
 
 	// Wait for context cancellation
-	<-serverCtx.Done()
+	<-ctx.Done()
 	s.logger.Println("Shutting down API server...")
-
-	// Initiate graceful shutdown
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	if err := s.httpServer.Shutdown(shutdownCtx); err != nil {
-		return fmt.Errorf("API server shutdown failed: %w", err)
-	}
-
-	// Wait for server goroutine to finish
-	s.wg.Wait()
-	s.logger.Println("API server stopped")
 
 	return nil
 }
@@ -126,14 +132,16 @@ func (s *Server) Start(ctx context.Context) error {
 // Allows in-flight requests up to 30 seconds to complete
 // Called by main bot during shutdown sequence
 func (s *Server) Stop() error {
-	s.cancelMu.Lock()
-	if s.cancel != nil {
-		s.cancel()
-	}
-	s.cancelMu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 
-	// Wait for Start goroutine to finish (which handles the shutdown)
+	if err := s.httpServer.Shutdown(ctx); err != nil {
+		return fmt.Errorf("API server shutdown failed: %w", err)
+	}
+
+	// Wait for Start goroutine to finish
 	s.wg.Wait()
+	s.logger.Println("API server stopped")
 
 	return nil
 }

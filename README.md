@@ -113,6 +113,11 @@ Required environment variables:
 
 - `DISCORD_TOKEN` - Bot authentication token from Discord Developer Portal
 - `CHANNEL_ID` - Target Discord channel ID for status messages (integer)
+- `API_BEARER_TOKEN` (if API_ENABLED=true):
+  - **MUST be at least 32 random characters.**
+  - Do not use default demo, placeholder, or simple tokens.
+  - Example (strong token): `head -c 48 /dev/urandom | base64`
+  - The bot will fail to start if this variable is missing or too weak.
 
 ### JSON Configuration
 
@@ -182,8 +187,14 @@ API_PORT=3001
 API_BEARER_TOKEN=your-secure-token-here
 
 # Optional: Comma-separated list of allowed CORS origins
-# Leave empty for no CORS, use "*" for all origins
+# Empty = No CORS. Use "*" ONLY for development/testing, never in production! Example: API_CORS_ORIGINS=*
+# Comma-separated allowlist required for production (e.g., "https://site1.com,https://site2.com").
+# If '*' is set and ALLOW_CORS_ANY is not true, startup will fail with a clear error.
 API_CORS_ORIGINS=https://example.com,https://app.com
+
+# ALLOW_CORS_ANY: Set to 'true' for development/testing to allow wildcard * origins for local UIs.
+# ABSOLUTELY MUST be unset or false in production (startup will fail if the wildcard is used and this is not set).
+ALLOW_CORS_ANY=false
 ```
 
 ### API Endpoints
@@ -230,16 +241,16 @@ curl -X POST \
 ### API Features
 
 - **Atomic writes**: Config updates use temp-file-then-rename pattern to prevent corruption
-- **Backup protection**: Every write creates `config.json.backup` for rollback
+- **Backup rotation**: Every write creates 4 backup files (`config.json.backup`, `.backup.1`, `.backup.2`, `.backup.3`) for rollback
 - **Automatic reload**: Changes trigger the existing 30-second polling cycle to reload config
 - **Bearer token auth**: RFC 6750 compliant authentication
 - **Rate limiting**: 10 req/sec per IP with 20 request burst
-- **CORS support**: Configurable cross-origin requests for web applications
+- **CORS enforcement**: 
+  - Production: explicit allowlist required via API_CORS_ORIGINS (no wildcard allowed)
+  - Dev/test: set ALLOW_CORS_ANY=true to allow '*'
+  - Startup will exit with error if unsafe/misconfigured
 - **Security headers**: X-Content-Type-Options, X-Frame-Options, CSP included
 
-### API Trusted Proxy IPs
-
-`API_TRUSTED_PROXY_IPS`: Comma-separated list of trusted proxy IP addresses (empty default). Required when deploying behind reverse proxy (nginx, AWS ALB, Cloudflare). Leave empty for direct internet exposure. See api/README.md for configuration details.
 
 ### Response Format
 
@@ -263,7 +274,105 @@ Error responses:
 }
 ```
 
+## Session-Based Proxy (Optional)
+
+The bot includes an optional session-based authentication layer that proxies API requests, eliminating Bearer token exposure in browser JavaScript. When enabled, the web UI authenticates once via Bearer token, receives an HTTP-only session cookie, and all subsequent API requests use the session cookie instead of the Bearer token. The backend validates sessions and proxies requests to the existing API, adding the Bearer token server-side.
+
+### Enabling the Proxy
+
+Set the following environment variables:
+
+```bash
+# Enable the session-based proxy server
+PROXY_ENABLED=true
+
+# Proxy server port (default: 8080)
+PROXY_PORT=8080
+
+# Bearer token for proxy validation (uses same token as bot API)
+# Must match API_BEARER_TOKEN if both are enabled
+API_BEARER_TOKEN=your-secure-token-here
+```
+
+### Proxy Endpoints
+
+```bash
+# Login (exchange Bearer token for session cookie)
+curl -X POST \
+  -H "Content-Type: application/json" \
+  -d '{"token": "Bearer your-token-here"}' \
+  -c cookies.txt \
+  http://localhost:8080/proxy/login
+
+# Access API using session cookie
+curl -b cookies.txt \
+  http://localhost:8080/proxy/api/config
+
+# Logout (invalidate session)
+curl -X POST \
+  -b cookies.txt \
+  http://localhost:8080/proxy/logout
+```
+
+### Proxy Features
+
+- **HTTP-only session cookies**: Prevents XSS access to session tokens
+- **SameSite=Strict**: CSRF protection by default
+- **File-based session storage**: Persists across restarts (in `./sessions/` directory)
+- **4-hour session timeout**: Balances security and UX for admin tool
+- **Automatic session cleanup**: Background goroutine removes expired sessions every 5 minutes
+- **10-second upstream timeout**: Fast error reporting for unresponsive bot API
+
+### Proxy vs. Direct API Access
+
+| Feature | Direct API (Bearer Token) | Session Proxy (Cookie) |
+|---------|--------------------------|------------------------|
+| Authentication | Bearer token in Authorization header | HTTP-only session cookie |
+| Token storage | Frontend (sessionStorage/localStorage) | Server-side only |
+| XSS exposure | Token accessible via JavaScript | Token inaccessible (HTTP-only) |
+| Use case | API clients, scripts | Web UI, browser-based tools |
+| Request path | Client -> Bot API | Client -> Proxy -> Bot API |
+
+### Deployment with Proxy
+
+When enabling the proxy, expose both ports in your container configuration:
+
+```bash
+podman run -d \
+  --name ac-discordbot \
+  -e DISCORD_TOKEN="your_token" \
+  -e CHANNEL_ID="your_channel_id" \
+  -e API_BEARER_TOKEN="your_api_token" \
+  -e API_ENABLED=true \
+  -e PROXY_ENABLED=true \
+  -p 3001:3001 \
+  -p 8080:8080 \
+  -v /opt/ac-discordbot/config.json:/data/config.json:ro \
+  --restart unless-stopped \
+  ac-discordbot
+```
+
+The web UI (`static/`) connects to the proxy at port 8080 for secure session-based access, while direct API clients can still connect to port 3001 with Bearer token authentication.
+
 ## Deployment
+
+### Security Guide, Incident Response & Pre-Release Checklist
+
+See [SECURITY.md](./SECURITY.md) for:
+- Credential rotation and incident response procedures
+- Pre-release/operational security checklist
+- Security contact instructions
+
+### Security: Non-root User & File Permissions
+
+- The container *must not* run as root. It is built/run as `USER 1001 (absabot)`.
+- The application will immediately refuse to start as root (UID 0).
+- The container must not run as root. It is built/run as `USER 1001 (absabot)`.
+- The application will immediately refuse to start as root (UID 0).
+- **CI pipeline runs an image test job on every build:**
+  - Launches the image and verifies the run-time UID/GID is 1001/1001 (never root)
+  - If the image is ever accidentally changed to root (UID 0) the build will fail before pushing/publishing.
+- See troubleshooting for example file permissions and typical errors (the application does not enforce config file/directory permissions at runtime).
 
 ### Podman (Recommended)
 
@@ -583,6 +692,70 @@ podman logs ac-discordbot | grep "Configuration validated"
 # - Bot must have "Read Messages" and "Send Messages" permissions
 # - CHANNEL_ID must be correct (right-click channel → Copy ID)
 ```
+
+## Secrets Hygiene Scan (truffleHog)
+
+Continuous Integration runs [`truffleHog`](https://github.com/trufflesecurity/trufflehog) on every build/tag:
+- Checks all repo files and commit history for strings matching secrets/tokens (TOKEN, SECRET, API_KEY, Bearer, Discord, etc)
+- **Fail-fast:** CI blocks any push/PR/release containing unapproved secrets.
+- Exceptions: files ending in `.example`, `.sample`, and a few other common patterns are allowlisted.
+- Security report is visible in GitHub Actions for every build/tag.
+
+**Local check:**
+- Recommended: before pushing, install and run locally:
+  ```bash
+  pip install trufflehog
+  trufflehog filesystem . --regex --entropy=False
+  ```
+- Never commit real secrets—use placeholders only in config, .env.example, or docs.
+
+
+## Dependency Security Scanning (govulncheck)
+
+Continuous Integration runs [`govulncheck`](https://github.com/golang/govulncheck-action) on every build/tag:
+- Scans all Go modules for known vulnerabilities (CVEs/Go advisories).
+- **Fail-fast:** CI will block any release (including Docker builds) if vulnerabilities are detected in dependencies.
+- Security report is presented directly in the GitHub Actions log for every build/tag.
+
+**Local check:**
+- Recommended: before pushing, install and run the tool locally:
+  ```bash
+  go install golang.org/x/vuln/cmd/govulncheck@latest
+  govulncheck ./...
+  ```
+- Always address any high/critical vulnerabilities before opening PRs or merging.
+
+
+## Security: Secrets-Safe Logging
+
+### Startup/Fail-Fast Security Integration Test
+
+A dedicated script (`test_api_token_fails.sh`) is provided to **verify that the application fails at startup if API authentication is not secure**. This ensures no deployment can mistakenly use a weak or default `API_BEARER_TOKEN` when `API_ENABLED=true`.
+
+A second script (`test_cors_fails.sh`) checks that CORS wildcards are prohibited in production, and only allowed with explicit dev approval via ALLOW_CORS_ANY. It covers:
+- Startup refusal if API_CORS_ORIGINS="*" and ALLOW_CORS_ANY is not explicitly true
+- Failure if '*' is used with additional origins (ambiguous config)
+- Correct startup with bold warning when ALLOW_CORS_ANY=true is set
+
+**Usage:**
+
+```bash
+# Run in the repo root (requires bash and Go)
+./test_api_token_fails.sh      # Verifies startup fails on bad/missing API token
+./test_cors_fails.sh          # Verifies CORS fail-fast and dev override enforcement
+```
+- The scripts build the bot, exercise various startup cases, and print [PASS]/[FAIL] for each.
+- They assert that the correct fatal error is printed and that startup aborts for security violations, and that startup passes with a proper dev override.
+- Use these in CI, pre-merge checks, or local security audits.
+
+**Note:** These tests must be run against the built binary, not via `go test`, because the fail-fast checks use os.Exit.
+
+### Never Log Secrets or Tokens
+- **All log output is automatically filtered for secrets, tokens, and passwords.**
+- The logger scans for API_KEY, TOKEN, Bearer, password, and similar patterns, replacing values with `[REDACTED]` before logging.
+- Developers do not need to handle redaction themselves—every log line (from app or standard library) is guarded.
+- This policy is enforced by unit tests and is mandatory for all contributors.
+- If you write new error flows, always ensure errors are logged via the global logger, not fmt.Print directly.
 
 ## Code Architecture
 
