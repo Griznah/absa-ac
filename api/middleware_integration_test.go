@@ -36,7 +36,7 @@ func TestTimingIndependence(t *testing.T) {
 		},
 		{
 			name:       "Token matches first char only",
-			authHeader: "Bearer sxxxxxxxxxx", // Same length as "secret-token" (12 chars)
+			authHeader: "Bearer sxxxxxxxxxxx", // Same length as "secret-token" (12 chars)
 		},
 		{
 			name:       "Token matches last char only",
