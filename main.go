@@ -19,9 +19,9 @@ import (
 // ================= CONFIG =================
 
 var (
-	discordToken  string
-	channelID     string
-	serverIP      string
+	//	discordToken   string
+	//	channelID      string
+	serverIP       string
 	updateInterval = 30 // seconds
 )
 
@@ -35,63 +35,63 @@ type Server struct {
 var servers = []Server{
 	// -------- DRIFT --------
 	{
-		Name:     "ABSA Drift#1 | Rotating Maps | BDC 4.0",
+		Name:     "ABSA#1 Drift | Rotating Maps | BDC 4.0",
 		IP:       "", // Will be set from serverIP env var
 		Port:     8081,
 		Category: "Drift",
 	},
 	{
-		Name:     "ABSA Drift#2 | Rotating Maps | Gravy Garage",
+		Name:     "ABSA#2 Drift | Rotating Maps | Gravy Garage",
 		IP:       "",
 		Port:     8082,
 		Category: "Drift",
 	},
 	{
-		Name:     "ABSA Drift#3 | Rotating Maps | SWARM 3.2",
+		Name:     "ABSA#3 Drift | Rotating Maps | SWARM 3.2",
 		IP:       "",
 		Port:     8083,
 		Category: "Drift",
 	},
 	{
-		Name:     "ABSA Drift#4 | Rotating Maps | SWARM 3.2",
+		Name:     "ABSA#4 Drift | Rotating Maps | SWARM 3.2",
 		IP:       "",
 		Port:     8084,
 		Category: "Drift",
 	},
 	{
-		Name:     "ABSA Drift#8 | Rotating Maps | SWARM 3.2 Touge",
+		Name:     "ABSA#8 Drift | Rotating Maps | SWARM 3.2 Touge",
 		IP:       "",
 		Port:     8088,
 		Category: "Drift",
 	},
 	// -------- TOUGE --------
 	{
-		Name:     "ABSA Race#6 | Touge FAST Lap",
+		Name:     "ABSA#6 Race | Touge FAST Lap",
 		IP:       "",
 		Port:     8086,
 		Category: "Touge",
 	},
 	// -------- TRACK --------
 	{
-		Name:     "ABSA Race#5 | Nordschleife Tourist FAST Lap",
+		Name:     "ABSA#5 Race | Nordschleife Tourist FAST Lap",
 		IP:       "",
 		Port:     8085,
 		Category: "Track",
 	},
 	{
-		Name:     "ABSA GoKart#7 | Rotating Maps |",
+		Name:     "ABSA#7 Let's play tag!  | Rotating Maps",
 		IP:       "",
 		Port:     8087,
 		Category: "Track",
 	},
 	{
-		Name:     "ABSA SRP#9 | SRP Traffic|",
+		Name:     "ABSA#9 SRP | SRP Traffic",
 		IP:       "",
 		Port:     8089,
 		Category: "Track",
 	},
 	{
-		Name:     "ABSA SRP#10 | SRP Traffic|",
+		Name:     "ABSA#10 SRP | SRP Traffic",
 		IP:       "",
 		Port:     8090,
 		Category: "Track",
@@ -494,8 +494,8 @@ func main() {
 		log.Fatalf("Configuration error: %v", err)
 	}
 
-	discordToken = token
-	channelID = channelID
+	//	discordToken = token
+	//	channelID = channelID
 	serverIP = ip
 
 	// Update server IPs in the servers list
