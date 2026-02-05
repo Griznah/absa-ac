@@ -1,6 +1,8 @@
 package api
 
 import (
+	"context"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -30,7 +32,7 @@ func TestStaticFileServer_ServesFiles(t *testing.T) {
 
 	// Create API server (minimal config for testing)
 	cm := &mockConfigManager{}
-	server := NewServer(cm, "3001", "test-token", []string{"*"}, nil)
+	server := NewServer(cm, "3001", "test-token", []string{"*"}, []string{}, log.Default())
 	mux := http.NewServeMux()
 	RegisterRoutes(mux, server)
 
@@ -75,7 +77,7 @@ func TestStaticFileServer_RedirectsTrailingSlash(t *testing.T) {
 	os.Chdir(tmpDir)
 
 	cm := &mockConfigManager{}
-	server := NewServer(cm, "3001", "test-token", []string{"*"}, nil)
+	server := NewServer(cm, "3001", "test-token", []string{"*"}, []string{}, log.Default())
 	mux := http.NewServeMux()
 	RegisterRoutes(mux, server)
 
@@ -105,7 +107,7 @@ func TestStaticFileServer_NotFound(t *testing.T) {
 	os.Chdir(tmpDir)
 
 	cm := &mockConfigManager{}
-	server := NewServer(cm, "3001", "test-token", []string{"*"}, nil)
+	server := NewServer(cm, "3001", "test-token", []string{"*"}, []string{}, log.Default())
 	mux := http.NewServeMux()
 	RegisterRoutes(mux, server)
 
@@ -137,7 +139,7 @@ func TestStaticFileServer_DirectoryTraversal(t *testing.T) {
 	os.Chdir(tmpDir)
 
 	cm := &mockConfigManager{}
-	server := NewServer(cm, "3001", "test-token", []string{"*"}, nil)
+	server := NewServer(cm, "3001", "test-token", []string{"*"}, []string{}, log.Default())
 	mux := http.NewServeMux()
 	RegisterRoutes(mux, server)
 
@@ -198,7 +200,7 @@ func TestStaticFileServer_MIMETypes(t *testing.T) {
 	os.Chdir(tmpDir)
 
 	cm := &mockConfigManager{}
-	server := NewServer(cm, "3001", "test-token", []string{"*"}, nil)
+	server := NewServer(cm, "3001", "test-token", []string{"*"}, []string{}, log.Default())
 	mux := http.NewServeMux()
 	RegisterRoutes(mux, server)
 
@@ -242,7 +244,7 @@ func TestStaticFileServer_MissingStaticDirectory(t *testing.T) {
 	os.Chdir(tmpDir)
 
 	cm := &mockConfigManager{}
-	server := NewServer(cm, "3001", "test-token", []string{"*"}, nil)
+	server := NewServer(cm, "3001", "test-token", []string{"*"}, []string{}, log.Default())
 	mux := http.NewServeMux()
 	RegisterRoutes(mux, server)
 
@@ -269,7 +271,7 @@ func TestStaticFileServer_SecurityHeaders(t *testing.T) {
 	os.Chdir(tmpDir)
 
 	cm := &mockConfigManager{}
-	server := NewServer(cm, "3001", "test-token", []string{"*"}, nil)
+	server := NewServer(cm, "3001", "test-token", []string{"*"}, []string{}, log.Default())
 
 	// We need to test through the full middleware chain to verify security headers
 	mux := http.NewServeMux()
@@ -313,13 +315,13 @@ func TestStaticFileServer_RateLimited(t *testing.T) {
 	os.Chdir(tmpDir)
 
 	cm := &mockConfigManager{}
-	server := NewServer(cm, "3001", "test-token", []string{"*"}, nil)
+	server := NewServer(cm, "3001", "test-token", []string{"*"}, []string{}, log.Default())
 
 	mux := http.NewServeMux()
 	RegisterRoutes(mux, server)
 
 	// Apply rate limiting middleware (strict limit for testing)
-	rateLimit := RateLimit(1, 1) // 1 req/sec, burst of 1
+	rateLimit := RateLimit(1, 1, []string{}, context.Background()) // 1 req/sec, burst of 1
 	wrappedMux := rateLimit(mux)
 
 	// First request should succeed

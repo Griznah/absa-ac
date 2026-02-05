@@ -161,20 +161,16 @@ func loadEnv() error {
 // ================= CONFIG =================
 
 var (
-	// API configuration flags (read from environment, stored in Bot struct)
-	apiEnabled     bool
-	apiPort        string
-	apiBearerToken string
-	apiCorsOrigins string
-
 	// API configuration
-	apiEnabled         bool
-	apiPort            string
-	apiBearerToken     string
-	apiCorsOrigins     string
-	apiTrustedProxies  string
-	apiServer          *api.Server
-	apiServerCancel    context.CancelFunc
+	apiEnabled        bool
+	apiPort           string
+	apiBearerToken    string
+	apiCorsOrigins    string
+	apiTrustedProxies string
+
+	// Proxy configuration
+	proxyEnabled bool
+	proxyPort    string
 )
 
 type Server struct {
@@ -1244,7 +1240,7 @@ func createDiscordSession(token string) (*discordgo.Session, error) {
 
 // NewBot creates a new Bot instance with Discord session and optional API server
 // Accepts dependencies via constructor injection (enables testing with mocks)
-func NewBot(cfgManager *ConfigManager, token, channelID string, apiEnabled bool, apiPort, apiBearerToken, apiCorsOrigins string) (*Bot, error) {
+func NewBot(cfgManager *ConfigManager, token, channelID string, apiEnabled bool, apiPort, apiBearerToken, apiCorsOrigins, apiTrustedProxies string) (*Bot, error) {
 	if token == "" {
 		return nil, fmt.Errorf("DISCORD_TOKEN environment variable not set")
 	}
@@ -1279,7 +1275,17 @@ func NewBot(cfgManager *ConfigManager, token, channelID string, apiEnabled bool,
 			}
 		}
 
-		bot.apiServer = api.NewServer(cfgManager, apiPort, apiBearerToken, corsOrigins, log.Default())
+		// Parse trusted proxies
+		var apiTrustedProxyList []string
+		if apiTrustedProxies != "" {
+			apiTrustedProxyList = strings.Split(apiTrustedProxies, ",")
+			// Trim whitespace from each proxy IP
+			for i, proxy := range apiTrustedProxyList {
+				apiTrustedProxyList[i] = strings.TrimSpace(proxy)
+			}
+		}
+
+		bot.apiServer = api.NewServer(cfgManager, apiPort, apiBearerToken, corsOrigins, apiTrustedProxyList, log.Default())
 		log.Printf("API server configured on port %s with CORS origins: %s", apiPort, apiCorsOrigins)
 	}
 
@@ -1574,6 +1580,7 @@ func main() {
 
 	// Parse upstream timeout (default 10 seconds, max 60 seconds)
 	const maxUpstreamTimeout = 60 * time.Second
+	proxyUpstreamTimeout := 10 * time.Second
 	if timeoutStr := os.Getenv("PROXY_UPSTREAM_TIMEOUT"); timeoutStr != "" {
 		var err error
 		proxyUpstreamTimeout, err = time.ParseDuration(timeoutStr)
@@ -1583,8 +1590,6 @@ func main() {
 		if proxyUpstreamTimeout > maxUpstreamTimeout {
 			log.Fatalf("PROXY_UPSTREAM_TIMEOUT exceeds maximum of %v", maxUpstreamTimeout)
 		}
-	} else {
-		proxyUpstreamTimeout = 10 * time.Second
 	}
 
 	// Validate proxy configuration if enabled
@@ -1619,7 +1624,7 @@ func main() {
 
 	// Create config manager with initial config
 	configManager := NewConfigManager(getConfigPath(*configPath), cfg)
-	bot, err := NewBot(configManager, token, channelID, apiEnabled, apiPort, apiBearerToken, apiCorsOrigins)
+	bot, err := NewBot(configManager, token, channelID, apiEnabled, apiPort, apiBearerToken, apiCorsOrigins, apiTrustedProxies)
 	if err != nil {
 		log.Fatalf("Failed to create bot: %v", err)
 	}
@@ -1636,19 +1641,6 @@ func main() {
 			log.Printf("Failed to start proxy server: %v", err)
 			log.Println("Continuing without proxy server...")
 		}
-
-		// Create API server
-		apiServer = api.NewServer(configManager, apiPort, apiBearerToken, corsOrigins, apiTrustedProxyList, log.Default())
-
-		// Start API server in background (handles graceful shutdown on context cancellation)
-		ctx, cancel := context.WithCancel(context.Background())
-		apiServerCancel = cancel
-
-		go func() {
-			if err := apiServer.Start(ctx); err != nil {
-				log.Printf("API server error: %v", err)
-			}
-		}()
 	}
 
 	// Wait for shutdown signal

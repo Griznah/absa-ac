@@ -334,7 +334,7 @@ func RateLimit(requestsPerSecond int, burstSize int, trustedProxies []string, ct
 			}
 
 			// Extract client IP with trusted proxy validation
-			clientIP := extractClientIP(r, trustedProxies)
+			clientIP = extractClientIP(r, trustedProxies)
 
 			// Get or create limiter for this IP
 			rm.mu.RLock()

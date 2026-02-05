@@ -47,12 +47,13 @@ func TestCSRFTokenRotation(t *testing.T) {
 // TestCSRFTokenEndpoint verifies /api/csrf-token returns token
 func TestCSRFTokenEndpoint(t *testing.T) {
 	cm := &mockConfigManager{}
-	server := NewServer(cm, "3001", "test-token", []string{"*"}, nil)
+	logger := &testLogger{}
+	server := NewServer(cm, "3001", "test-token", []string{"*"}, []string{}, logger.stdLogger())
 	mux := http.NewServeMux()
 	RegisterRoutes(mux, server)
 
 	// Apply auth middleware (CSRF token endpoint requires auth)
-	authMiddleware := BearerAuth("test-token")
+	authMiddleware := BearerAuth("test-token", []string{})
 	wrappedMux := authMiddleware(mux)
 
 	req := httptest.NewRequest("GET", "/api/csrf-token", nil)
@@ -277,12 +278,13 @@ func TestCSRFMiddleware_StateChangingMethodsRequireToken(t *testing.T) {
 // TestCSRFIntegration_FullRequestFlow tests end-to-end CSRF in API request
 func TestCSRFIntegration_FullRequestFlow(t *testing.T) {
 	cm := &mockConfigManager{}
-	server := NewServer(cm, "3001", "test-token", []string{"*"}, nil)
+	logger := &testLogger{}
+	server := NewServer(cm, "3001", "test-token", []string{"*"}, []string{}, logger.stdLogger())
 	mux := http.NewServeMux()
 	RegisterRoutes(mux, server)
 
 	// Apply middleware chain (same as server.Start)
-	authMiddleware := BearerAuth("test-token")
+	authMiddleware := BearerAuth("test-token", []string{})
 	csrfMiddleware := CSRF
 
 	wrappedMux := csrfMiddleware(authMiddleware(mux))

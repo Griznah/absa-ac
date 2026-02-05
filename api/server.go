@@ -4,10 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"mime"
 	"net/http"
-	"os"
-	"strconv"
 	"sync"
 	"time"
 )
@@ -56,8 +53,6 @@ func NewServer(cm ConfigManager, port string, bearerToken string, corsOrigins []
 			WriteTimeout: 15 * time.Second, // Prevents slow clients
 			IdleTimeout:  60 * time.Second,
 		},
-		rateLimit: rateLimit,
-		rateBurst: rateBurst,
 	}
 }
 

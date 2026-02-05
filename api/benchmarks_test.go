@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,7 +11,7 @@ import (
 // BenchmarkBearerAuth measures timing-safe comparison overhead
 func BenchmarkBearerAuth(b *testing.B) {
 	token := "valid-bearer-token-12345678"
-	authMiddleware := BearerAuth(token)
+	authMiddleware := BearerAuth(token, []string{})
 
 	handler := authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -28,7 +29,7 @@ func BenchmarkBearerAuth(b *testing.B) {
 
 // BenchmarkRateLimit measures rate limiter performance
 func BenchmarkRateLimit(b *testing.B) {
-	rateLimit := RateLimit(100, 100)
+	rateLimit := RateLimit(100, 100, []string{}, context.Background())
 	handler := rateLimit(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))

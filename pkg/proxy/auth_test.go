@@ -237,8 +237,8 @@ func TestLoginHandler_Success(t *testing.T) {
 		t.Errorf("Expected SameSiteStrictMode, got %v", cookie.SameSite)
 	}
 
-	if cookie.Path != "/proxy" {
-		t.Errorf("Expected Path '/proxy', got '%s'", cookie.Path)
+	if cookie.Path != "/" {
+		t.Errorf("Expected Path '/', got '%s'", cookie.Path)
 	}
 
 	var resp LoginResponse
@@ -585,8 +585,8 @@ func TestSetSessionCookie(t *testing.T) {
 		t.Errorf("Expected SameSiteStrictMode, got %v", cookie.SameSite)
 	}
 
-	if cookie.Path != "/proxy" {
-		t.Errorf("Expected Path '/proxy', got '%s'", cookie.Path)
+	if cookie.Path != "/" {
+		t.Errorf("Expected Path '/', got '%s'", cookie.Path)
 	}
 
 	if cookie.MaxAge != int((4 * time.Hour).Seconds()) {

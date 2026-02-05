@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -18,7 +19,7 @@ import (
 // After fix: crypto/subtle.ConstantTimeCompare prevents timing attacks
 func TestTimingAttackMeasurement(t *testing.T) {
 	token := "valid-bearer-token-12345678"
-	auth := BearerAuth(token)
+	auth := BearerAuth(token, []string{})
 
 	// Create test handler
 	handler := auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -79,7 +80,7 @@ func TestTimingAttackMeasurement(t *testing.T) {
 // Current implementation: uses leftmost IP (can be spoofed by client)
 // After fix: uses rightmost IP (last proxy, trusted)
 func TestRateLimitIPSpoofing(t *testing.T) {
-	rateLimit := RateLimit(2, 2) // 2 req/sec, burst 2
+	rateLimit := RateLimit(2, 2, []string{}, context.Background()) // 2 req/sec, burst 2
 	handler := rateLimit(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -117,7 +118,7 @@ func TestRateLimitIPSpoofing(t *testing.T) {
 // Current implementation: map never cleaned up (unbounded growth)
 // After fix: sync.Pool with 5-minute expiration
 func TestRateLimitMemoryBomb(t *testing.T) {
-	rateLimit := RateLimit(100, 100)
+	rateLimit := RateLimit(100, 100, []string{}, context.Background())
 	handler := rateLimit(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))

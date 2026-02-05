@@ -218,7 +218,7 @@ func TestRateLimit_HealthCheckIsRateLimited(t *testing.T) {
 	})
 
 	// Very strict rate limit for health check (1 req/sec, burst of 1)
-	middleware := RateLimit(1, 1)
+	middleware := RateLimit(1, 1, []string{}, context.Background())
 	wrapped := middleware(handler)
 
 	req := httptest.NewRequest("GET", "/health", nil)
