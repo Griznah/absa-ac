@@ -72,7 +72,7 @@ func (s *Server) Start(ctx context.Context) error {
 	mux := http.NewServeMux()
 
 	// Apply middleware chain (order matters: each middleware wraps the previous one)
-	// Execution order (outer to inner): SecurityHeaders → CORS → RateLimit → Logger → BearerAuth
+	// Execution order (outer to inner): SecurityHeaders → CORS → Logger → RateLimit → BearerAuth
 	securityHeadersMiddleware := SecurityHeaders()
 	// CORS: second layer (cross-origin checks before auth)
 	corsMiddleware := CORS(s.corsOrigins)

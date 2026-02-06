@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"testing"
+	"time"
 )
 
 // TestMiddlewareChainOrder verifies middleware executes in correct sequence
@@ -53,10 +54,12 @@ func TestFullRequestFlow(t *testing.T) {
 	testLogger := log.New(&testWriter{}, "", 0)
 
 	// Apply middleware chain
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	handler := SecurityHeaders()(mux)
 	handler = CORS([]string{"http://localhost:3001"})(handler)
 	handler = Logger(testLogger)(handler)
-	handler = RateLimit(10, 20, []string{}, context.Background())(handler)
+	handler = RateLimit(10, 20, []string{}, ctx)(handler)
 	handler = BearerAuth("valid-token", []string{})(handler)
 
 	// Test valid request
@@ -113,7 +116,9 @@ func TestConfigUpdateWithRealFile(t *testing.T) {
 func TestRateLimitExpiration(t *testing.T) {
 	t.Skip("Rate limiter expiration requires 6 minutes to verify - manual testing only")
 
-	rateLimit := RateLimit(1, 1, []string{}, context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	rateLimit := RateLimit(1, 1, []string{}, ctx)
 	handler := rateLimit(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))

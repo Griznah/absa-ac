@@ -12,7 +12,9 @@ import (
 )
 
 // TestTimingIndependence verifies that authentication timing is independent
-// of token length or match position by running many iterations and checking variance.
+// of token match position by running many iterations and checking variance.
+// All test scenarios use tokens of the same length (12 chars) to isolate
+// position-dependent timing from length-dependent effects.
 // This is a statistical test marked with +build integration to skip in normal CI.
 func TestTimingIndependence(t *testing.T) {
 	const iterations = 10000

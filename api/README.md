@@ -388,7 +388,7 @@ curl http://localhost/api/config  # Check RemoteAddr in logs
 | ------- | ---------------------- | ----- |
 | Direct internet exposure | (empty) | Secure default |
 | Single nginx proxy | `10.0.0.1` | Check nginx upstream IP |
-| AWS ALB | `10.0.1.0/24` | ALB IPs change, use CIDR |
+| Multiple proxies | `10.0.0.1,10.0.0.2` | List all proxy IPs |
 | Cloudflare | (empty) + Cloudflare auth | Don't trust CF IPs directly |
 | CDN + nginx | `10.0.0.1,10.0.0.2` | List all proxy IPs |
 
@@ -410,7 +410,7 @@ curl http://localhost/api/config  # Check RemoteAddr in logs
 
 **Symptom**: Server exits at startup with "failed to parse trusted proxy IP".
 
-**Diagnosis**: Malformed IP in `API_TRUSTED_PROXY_IPS` (e.g., typo, invalid CIDR).
+**Diagnosis**: Malformed IP in `API_TRUSTED_PROXY_IPS` (e.g., typo, invalid format).
 
 **Solution**: Fix IP address and restart. Server validates IPs at startup to prevent silent misconfiguration.
 

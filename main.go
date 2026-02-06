@@ -1230,7 +1230,8 @@ func createDiscordSession(token string) (*discordgo.Session, error) {
 
 // NewBot creates a new Bot instance with Discord session and optional API server
 // Accepts dependencies via constructor injection (enables testing with mocks)
-func NewBot(cfgManager *ConfigManager, token, channelID string, apiEnabled bool, apiPort, apiBearerToken, apiCorsOrigins, apiTrustedProxies string) (*Bot, error) {
+// apiTrustedProxies should be a list of normalized IP addresses (IPv4-mapped IPv6 already converted)
+func NewBot(cfgManager *ConfigManager, token, channelID string, apiEnabled bool, apiPort, apiBearerToken, apiCorsOrigins string, apiTrustedProxies []string) (*Bot, error) {
 	if token == "" {
 		return nil, fmt.Errorf("DISCORD_TOKEN environment variable not set")
 	}
@@ -1265,17 +1266,7 @@ func NewBot(cfgManager *ConfigManager, token, channelID string, apiEnabled bool,
 			}
 		}
 
-		// Parse trusted proxies
-		var apiTrustedProxyList []string
-		if apiTrustedProxies != "" {
-			apiTrustedProxyList = strings.Split(apiTrustedProxies, ",")
-			// Trim whitespace from each proxy IP
-			for i, proxy := range apiTrustedProxyList {
-				apiTrustedProxyList[i] = strings.TrimSpace(proxy)
-			}
-		}
-
-		bot.apiServer = api.NewServer(cfgManager, apiPort, apiBearerToken, corsOrigins, apiTrustedProxyList, log.Default())
+		bot.apiServer = api.NewServer(cfgManager, apiPort, apiBearerToken, corsOrigins, apiTrustedProxies, log.Default())
 		log.Printf("API server configured on port %s with CORS origins: %s", apiPort, apiCorsOrigins)
 	}
 
@@ -1499,7 +1490,7 @@ func main() {
 
 	// Create config manager with initial config
 	configManager := NewConfigManager(getConfigPath(*configPath), cfg)
-	bot, err := NewBot(configManager, token, channelID, apiEnabled, apiPort, apiBearerToken, apiCorsOrigins, apiTrustedProxies)
+	bot, err := NewBot(configManager, token, channelID, apiEnabled, apiPort, apiBearerToken, apiCorsOrigins, apiTrustedProxyList)
 	if err != nil {
 		log.Fatalf("Failed to create bot: %v", err)
 	}
