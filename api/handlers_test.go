@@ -72,7 +72,7 @@ func TestHandlers_GetConfig(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cm := &mockConfigManagerWithWrites{config: tt.config}
-			s := NewServer(cm, "13001", "test-token", []string{}, log.New(os.Stdout, "TEST: ", log.LstdFlags))
+			s := NewServer(cm, "18080", "test-token", []string{}, []string{}, log.New(os.Stdout, "TEST: ", log.LstdFlags))
 
 			req := httptest.NewRequest("GET", "/api/config", nil)
 			rec := httptest.NewRecorder()
@@ -82,30 +82,47 @@ func TestHandlers_GetConfig(t *testing.T) {
 			if rec.Code != tt.wantStatus {
 				t.Errorf("Status = %d, want %d", rec.Code, tt.wantStatus)
 			}
+
+			// Verify response contains expected config
+			var gotConfig map[string]interface{}
+			if err := json.NewDecoder(rec.Body).Decode(&gotConfig); err != nil {
+				t.Errorf("Failed to decode response: %v", err)
+				return
+			}
+
+			if gotConfig["server_ip"] != tt.config.(map[string]interface{})["server_ip"] {
+				t.Errorf("server_ip = %v, want %v", gotConfig["server_ip"], tt.config.(map[string]interface{})["server_ip"])
+			}
 		})
 	}
 }
 
 func TestHandlers_PatchConfig(t *testing.T) {
 	tests := []struct {
-		name       string
-		body       string
-		wantStatus int
+		name            string
+		body            string
+		wantStatus      int
+		expectedUpdated map[string]interface{}
 	}{
 		{
 			name:       "Normal: Partial update merges changes",
 			body:       `{"update_interval": 120}`,
 			wantStatus: http.StatusOK,
+			expectedUpdated: map[string]interface{}{
+				"update_interval": float64(120),
+			},
 		},
 		{
-			name:       "Edge: Empty body returns 400",
-			body:       "",
-			wantStatus: http.StatusBadRequest,
+			name:            "Edge: Empty body returns 400",
+			body:            "",
+			wantStatus:      http.StatusBadRequest,
+			expectedUpdated: nil,
 		},
 		{
-			name:       "Edge: Invalid JSON returns 400",
-			body:       `{invalid json}`,
-			wantStatus: http.StatusBadRequest,
+			name:            "Edge: Invalid JSON returns 400",
+			body:            `{invalid json}`,
+			wantStatus:      http.StatusBadRequest,
+			expectedUpdated: nil,
 		},
 	}
 
@@ -113,11 +130,11 @@ func TestHandlers_PatchConfig(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			cm := &mockConfigManagerWithWrites{
 				config: map[string]interface{}{
-					"server_ip": "192.168.1.1",
+					"server_ip":       "192.168.1.1",
 					"update_interval": 60,
 				},
 			}
-			s := NewServer(cm, "13001", "test-token", []string{}, log.New(os.Stdout, "TEST: ", log.LstdFlags))
+			s := NewServer(cm, "18080", "test-token", []string{}, []string{}, log.New(os.Stdout, "TEST: ", log.LstdFlags))
 
 			var body string
 			if tt.body != "" {
@@ -134,6 +151,25 @@ func TestHandlers_PatchConfig(t *testing.T) {
 
 			if rec.Code != tt.wantStatus {
 				t.Errorf("Status = %d, want %d", rec.Code, tt.wantStatus)
+			}
+
+			// Verify config was actually updated for success cases
+			if tt.wantStatus == http.StatusOK && tt.expectedUpdated != nil {
+				cfgMap, ok := cm.config.(map[string]interface{})
+				if !ok {
+					t.Errorf("Config is not a map after update")
+				}
+				for key, expectedValue := range tt.expectedUpdated {
+					actualValue, exists := cfgMap[key]
+					if !exists {
+						t.Errorf("Key %q not found in config after update", key)
+						continue
+					}
+					if actualValue != expectedValue {
+						t.Errorf("Config[%q] = %v (type %T), want %v (type %T)",
+							key, actualValue, actualValue, expectedValue, expectedValue)
+					}
+				}
 			}
 		})
 	}
@@ -162,7 +198,7 @@ func TestHandlers_PutConfig(t *testing.T) {
 			cm := &mockConfigManagerWithWrites{
 				config: map[string]interface{}{"server_ip": "192.168.1.1"},
 			}
-			s := NewServer(cm, "13001", "test-token", []string{}, log.New(os.Stdout, "TEST: ", log.LstdFlags))
+			s := NewServer(cm, "18080", "test-token", []string{}, []string{}, log.New(os.Stdout, "TEST: ", log.LstdFlags))
 
 			var body string
 			if tt.body != "" {
@@ -191,9 +227,9 @@ func TestHandlers_ValidateConfig(t *testing.T) {
 		wantStatus int
 	}{
 		{
-			name:       "Normal: Valid JSON returns success",
+			name:       "Normal: Valid JSON returns 501 (Not Implemented)",
 			body:       `{"server_ip":"10.0.0.1"}`,
-			wantStatus: http.StatusOK,
+			wantStatus: http.StatusNotImplemented, // 501 - full validation not available
 		},
 		{
 			name:       "Edge: Invalid JSON returns 400",
@@ -205,7 +241,7 @@ func TestHandlers_ValidateConfig(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cm := &mockConfigManagerWithWrites{}
-			s := NewServer(cm, "13001", "test-token", []string{}, log.New(os.Stdout, "TEST: ", log.LstdFlags))
+			s := NewServer(cm, "18080", "test-token", []string{}, []string{}, log.New(os.Stdout, "TEST: ", log.LstdFlags))
 
 			var body string
 			if tt.body != "" {
@@ -248,7 +284,7 @@ func TestHandlers_GetServers(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cm := &mockConfigManagerWithWrites{config: tt.config}
-			s := NewServer(cm, "13001", "test-token", []string{}, log.New(os.Stdout, "TEST: ", log.LstdFlags))
+			s := NewServer(cm, "18080", "test-token", []string{}, []string{}, log.New(os.Stdout, "TEST: ", log.LstdFlags))
 
 			req := httptest.NewRequest("GET", "/api/config/servers", nil)
 			rec := httptest.NewRecorder()

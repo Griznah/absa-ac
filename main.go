@@ -20,8 +20,8 @@ import (
 	"time"
 
 	"github.com/bombom/absa-ac/api"
-	"github.com/bombom/absa-ac/pkg/proxy"
 	"github.com/bwmarrin/discordgo"
+	"net"
 )
 
 // ================= SECURITY: STRONG TOKEN ENFORCEMENT =================
@@ -160,16 +160,12 @@ func loadEnv() error {
 // ================= CONFIG =================
 
 var (
-	// API configuration flags (read from environment, stored in Bot struct)
-	apiEnabled     bool
-	apiPort        string
-	apiBearerToken string
-	apiCorsOrigins string
-
-	// Proxy configuration flags (read from environment)
-	proxyEnabled         bool
-	proxyPort            string
-	proxyUpstreamTimeout time.Duration
+	// API configuration
+	apiEnabled        bool
+	apiPort           string
+	apiBearerToken    string
+	apiCorsOrigins    string
+	apiTrustedProxies string
 )
 
 type Server struct {
@@ -760,11 +756,6 @@ type Bot struct {
 	// API server (optional - nil if disabled)
 	apiServer *api.Server
 	apiCancel context.CancelFunc
-
-	// Proxy server (optional - nil if disabled)
-	proxyServer *http.Server
-	proxyCancel context.CancelFunc
-	proxyStore  *proxy.SessionStore
 }
 
 // Config holds application configuration loaded from config.json
@@ -1239,7 +1230,8 @@ func createDiscordSession(token string) (*discordgo.Session, error) {
 
 // NewBot creates a new Bot instance with Discord session and optional API server
 // Accepts dependencies via constructor injection (enables testing with mocks)
-func NewBot(cfgManager *ConfigManager, token, channelID string, apiEnabled bool, apiPort, apiBearerToken, apiCorsOrigins string) (*Bot, error) {
+// apiTrustedProxies should be a list of normalized IP addresses (IPv4-mapped IPv6 already converted)
+func NewBot(cfgManager *ConfigManager, token, channelID string, apiEnabled bool, apiPort, apiBearerToken, apiCorsOrigins string, apiTrustedProxies []string) (*Bot, error) {
 	if token == "" {
 		return nil, fmt.Errorf("DISCORD_TOKEN environment variable not set")
 	}
@@ -1274,7 +1266,7 @@ func NewBot(cfgManager *ConfigManager, token, channelID string, apiEnabled bool,
 			}
 		}
 
-		bot.apiServer = api.NewServer(cfgManager, apiPort, apiBearerToken, corsOrigins, log.Default())
+		bot.apiServer = api.NewServer(cfgManager, apiPort, apiBearerToken, corsOrigins, apiTrustedProxies, log.Default())
 		log.Printf("API server configured on port %s with CORS origins: %s", apiPort, apiCorsOrigins)
 	}
 
@@ -1316,21 +1308,6 @@ func (b *Bot) WaitForShutdown() {
 	<-sigchan
 	log.Println("Shutting down...")
 
-	// Stop proxy server if running
-	if b.proxyServer != nil && b.proxyCancel != nil {
-		log.Println("Stopping proxy server...")
-		b.proxyCancel()
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := b.proxyServer.Shutdown(ctx); err != nil {
-			log.Printf("Error stopping proxy server: %v", err)
-		}
-		// Stop session cleanup
-		if b.proxyStore != nil {
-			b.proxyStore.StopBackgroundCleanup()
-		}
-	}
-
 	// Stop API server if running
 	if b.apiServer != nil && b.apiCancel != nil {
 		log.Println("Stopping API server...")
@@ -1358,68 +1335,6 @@ func (b *Bot) checkForConfigUpdates() error {
 		return nil
 	}
 	return b.configManager.checkAndReloadIfNeeded()
-}
-
-// ================= PROXY SERVER =================
-
-// startProxyServer initializes and starts the proxy server in a background goroutine
-// Creates session store, sets up routes, and starts HTTP server on configured port
-// useHTTPS: controls whether session cookies are marked Secure (true if behind HTTPS termination)
-// upstreamTimeout: timeout for upstream API requests (configurable via PROXY_UPSTREAM_TIMEOUT)
-// Returns error if session store creation or server startup fails
-func startProxyServer(bot *Bot, bearerToken string, useHTTPS bool, upstreamTimeout time.Duration) error {
-	// Create session store with file-based persistence
-	sessionsDir := "./sessions"
-	store, err := proxy.NewSessionStore(sessionsDir)
-	if err != nil {
-		return fmt.Errorf("failed to create session store: %w", err)
-	}
-	bot.proxyStore = store
-
-	// Build bot API URL for proxy upstream
-	botAPIURL := fmt.Sprintf("http://localhost:%s", apiPort)
-
-	// Setup proxy routes
-	mux := http.NewServeMux()
-
-	// Static file server for web UI (served from root path "/")
-	// Files are served directly from ./static directory
-	// Security: http.FileServer prevents directory traversal attacks
-	staticDir := "./static"
-	if _, err := os.Stat(staticDir); err == nil {
-		// Serve static files at root path (/, /css/styles.css, /js/app.js, etc.)
-		mux.Handle("/", http.FileServer(http.Dir(staticDir)))
-		log.Printf("Proxy serving static files from %s at root path", staticDir)
-	} else {
-		log.Printf("Warning: static directory not found at %s", staticDir)
-	}
-
-	// Auth endpoints
-	mux.HandleFunc("/login", proxy.LoginHandler(store, botAPIURL, useHTTPS, upstreamTimeout))
-	mux.HandleFunc("/logout", proxy.LogoutHandler(store, useHTTPS))
-
-	// API endpoints (authenticated with CSRF, proxied to backend)
-	proxyHandler := proxy.CSRFMiddleware(proxy.ProxyHandler(botAPIURL, store, upstreamTimeout), store)
-	mux.Handle("/api/", proxyHandler)
-
-	// Create HTTP server
-	bot.proxyServer = &http.Server{
-		Addr:    ":" + proxyPort,
-		Handler: mux,
-	}
-
-	// Start server in background goroutine
-	bot.proxyCancel = func() {}
-
-	go func() {
-		log.Printf("Proxy server listening on port %s", proxyPort)
-		if err := bot.proxyServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Printf("Proxy server error: %v", err)
-		}
-	}()
-
-	log.Printf("Proxy server started on port %s", proxyPort)
-	return nil
 }
 
 // ================= MAIN =================
@@ -1489,8 +1404,10 @@ func main() {
 	}
 	apiBearerToken = os.Getenv("API_BEARER_TOKEN")
 	apiCorsOrigins = os.Getenv("API_CORS_ORIGINS")
+	apiTrustedProxies = os.Getenv("API_TRUSTED_PROXY_IPS")
 
 	// Validate API configuration if enabled
+	var apiTrustedProxyList []string
 	if apiEnabled {
 		if !isStrongToken(apiBearerToken) {
 			log.Fatalf(`API_BEARER_TOKEN too weak or missing: must be at least 32 random characters, not default or placeholder.\nGenerate a strong token (command: head -c 48 /dev/urandom | base64) and place in .env as API_BEARER_TOKEN=your_token_here.`)
@@ -1519,46 +1436,41 @@ func main() {
 		if wildcardPresent && allowCorsAny {
 			log.Printf("[WARNING] ALLOW_CORS_ANY=true: API will run with wildcard ('*') origins. This is unsafe for production! Only use for local frontend development or testing.")
 		}
+
+		// Validate trusted proxy IPs if configured
+		if apiTrustedProxies != "" {
+			proxyList := strings.Split(apiTrustedProxies, ",")
+			apiTrustedProxyList = make([]string, 0, len(proxyList))
+
+			for _, proxyIP := range proxyList {
+				proxyIP = strings.TrimSpace(proxyIP)
+				if proxyIP == "" {
+					continue
+				}
+
+				// Validate IP format
+				ip := net.ParseIP(proxyIP)
+				if ip == nil {
+					log.Fatalf("Invalid trusted proxy IP address: %s", proxyIP)
+				}
+
+				// Normalize IP (convert IPv4-mapped IPv6 to IPv4)
+				normalizedIP := ip.String()
+				if ip.To4() != nil {
+					normalizedIP = ip.To4().String()
+				}
+
+				apiTrustedProxyList = append(apiTrustedProxyList, normalizedIP)
+				log.Printf("Trusted proxy added: %s", normalizedIP)
+			}
+		}
+
 		log.Printf("API server enabled on port %s with CORS origins: %s", apiPort, apiCorsOrigins)
-	}
-
-	// Read proxy configuration from environment
-	proxyEnabled = os.Getenv("PROXY_ENABLED") == "true"
-	proxyPort = os.Getenv("PROXY_PORT")
-	if proxyPort == "" {
-		proxyPort = "3001" // Default port
-	}
-	// Default to HTTPS for production security. Set PROXY_HTTPS=false to disable (not recommended).
-	proxyHTTPS := os.Getenv("PROXY_HTTPS") != "false"
-
-	// Parse upstream timeout (default 10 seconds, max 60 seconds)
-	const maxUpstreamTimeout = 60 * time.Second
-	if timeoutStr := os.Getenv("PROXY_UPSTREAM_TIMEOUT"); timeoutStr != "" {
-		var err error
-		proxyUpstreamTimeout, err = time.ParseDuration(timeoutStr)
-		if err != nil {
-			log.Fatalf("Invalid PROXY_UPSTREAM_TIMEOUT value '%s': %v", timeoutStr, err)
+		if len(apiTrustedProxyList) > 0 {
+			log.Printf("Trusted proxies configured: %v", apiTrustedProxyList)
+		} else {
+			log.Println("No trusted proxies configured - X-Forwarded-For will be ignored (secure by default)")
 		}
-		if proxyUpstreamTimeout > maxUpstreamTimeout {
-			log.Fatalf("PROXY_UPSTREAM_TIMEOUT exceeds maximum of %v", maxUpstreamTimeout)
-		}
-	} else {
-		proxyUpstreamTimeout = 10 * time.Second
-	}
-
-	// Validate proxy configuration if enabled
-	if proxyEnabled {
-		if apiBearerToken == "" {
-			log.Fatalf("PROXY_ENABLED=true but API_BEARER_TOKEN is not set (proxy uses same token)")
-		}
-		if !apiEnabled {
-			log.Fatalf("PROXY_ENABLED=true but API_ENABLED=false (proxy requires bot API)")
-		}
-		httpsStatus := "HTTP"
-		if proxyHTTPS {
-			httpsStatus = "HTTPS"
-		}
-		log.Printf("Proxy server enabled on port %s (%s mode - cookies Secure=%v, upstream timeout=%v)", proxyPort, httpsStatus, proxyHTTPS, proxyUpstreamTimeout)
 	}
 
 	token, channelID, err := validateConfig()
@@ -1578,7 +1490,7 @@ func main() {
 
 	// Create config manager with initial config
 	configManager := NewConfigManager(getConfigPath(*configPath), cfg)
-	bot, err := NewBot(configManager, token, channelID, apiEnabled, apiPort, apiBearerToken, apiCorsOrigins)
+	bot, err := NewBot(configManager, token, channelID, apiEnabled, apiPort, apiBearerToken, apiCorsOrigins, apiTrustedProxyList)
 	if err != nil {
 		log.Fatalf("Failed to create bot: %v", err)
 	}
@@ -1587,14 +1499,6 @@ func main() {
 
 	if err := bot.Start(); err != nil {
 		log.Fatalf("Failed to start bot: %v", err)
-	}
-
-	// Start proxy server if enabled
-	if proxyEnabled {
-		if err := startProxyServer(bot, apiBearerToken, proxyHTTPS, proxyUpstreamTimeout); err != nil {
-			log.Printf("Failed to start proxy server: %v", err)
-			log.Println("Continuing without proxy server...")
-		}
 	}
 
 	// Wait for shutdown signal

@@ -38,25 +38,22 @@ func (s *Server) GetServers(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg := s.cm.GetConfigAny()
 
-	// Type assert to access config fields
-	cfgMap, ok := cfg.(map[string]interface{})
-	if !ok {
-		// Try as struct with json serialization
-		data, err := json.Marshal(cfg)
-		if err != nil {
-			WriteError(w, http.StatusInternalServerError, "Failed to serialize config", err.Error())
-			return
-		}
-
-		var parsed map[string]interface{}
-		if err := json.Unmarshal(data, &parsed); err != nil {
-			WriteError(w, http.StatusInternalServerError, "Failed to parse config", err.Error())
-			return
-		}
-		cfgMap = parsed
+	// Serialize and deserialize to extract servers field
+	// Note: GetConfigAny returns *Config from main.go, which we can't import
+	// due to circular dependency, so we use JSON serialization to extract fields
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, "Failed to serialize config", err.Error())
+		return
 	}
 
-	servers, ok := cfgMap["servers"]
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		WriteError(w, http.StatusInternalServerError, "Failed to parse config", err.Error())
+		return
+	}
+
+	servers, ok := parsed["servers"]
 	if !ok {
 		WriteError(w, http.StatusInternalServerError, "Config missing servers field", "")
 		return
@@ -145,6 +142,9 @@ func (s *Server) PutConfig(w http.ResponseWriter, r *http.Request) {
 
 // ValidateConfig validates a configuration without applying it
 // Requires Bearer token authentication
+// NOTE: This endpoint only validates JSON syntax, not schema or business logic.
+// Full validation requires access to the ConfigManager's validation logic which
+// is defined in main.go and cannot be imported here due to circular dependency.
 func (s *Server) ValidateConfig(w http.ResponseWriter, r *http.Request) {
 	if err := r.Context().Err(); err != nil {
 		log.Printf("ValidateConfig cancelled: %v", err)
@@ -172,11 +172,13 @@ func (s *Server) ValidateConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Try to write the config - validation happens inside WriteConfig
-	// But we don't want to actually apply it, so we'll need a validation-only approach
-	// For now, return success since the request parsed as valid JSON
-	WriteJSON(w, http.StatusOK, map[string]interface{}{
-		"valid": true,
-		"message": "Config JSON is valid (full validation requires ConfigManager type)",
+	// Only JSON syntax validation is performed here
+	// Full schema validation (field presence, types, business rules) is not available
+	// through the ConfigManager interface without creating a circular dependency
+	WriteJSON(w, http.StatusNotImplemented, map[string]interface{}{
+		"valid":      false,
+		"json_syntax": true,
+		"message":   "JSON syntax is valid, but full schema validation is not available through this endpoint",
+		"note":      "Apply the config via PUT /api/config to trigger full validation",
 	})
 }

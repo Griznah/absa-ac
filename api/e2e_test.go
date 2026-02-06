@@ -90,22 +90,50 @@ func setupTestEnvironment(t *testing.T, initialConfig map[string]interface{}) (*
 		configPath: configPath,
 	}
 
-	// Start HTTP server
-	port := "19080" // Use different port for E2E tests
+	// Use environment variable for port, or default to 19080
+	// This allows CI systems to set unique ports per test run
+	port := os.Getenv("E2E_TEST_PORT")
+	if port == "" {
+		port = "19080" // Default port for E2E tests
+	}
 	bearerToken := "e2e-test-token"
-	cm.server = NewServer(cm, port, bearerToken, []string{}, log.New(os.Stdout, "E2E: ", log.LstdFlags))
+	cm.server = NewServer(cm, port, bearerToken, []string{}, []string{}, log.New(os.Stdout, "E2E: ", log.LstdFlags))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
 		_ = cm.server.Start(ctx)
 	}()
 
-	// Wait for server to start
-	time.Sleep(200 * time.Millisecond)
+	// Poll for server readiness instead of sleeping
+	baseURL := fmt.Sprintf("http://localhost:%s", port)
+	healthURL := baseURL + "/health"
 
+	const maxAttempts = 20
+	const pollInterval = 50 * time.Millisecond
+
+	// Use client with timeout to prevent hanging on stalled connections
+	healthClient := &http.Client{Timeout: 2 * time.Second}
+
+	var lastErr error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		resp, err := healthClient.Get(healthURL)
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				// Server is ready
+				goto serverReady
+			}
+		}
+		lastErr = err
+		time.Sleep(pollInterval)
+	}
+
+	// Server never became ready
+	t.Fatalf("Server did not become ready after %v: %v", maxAttempts*pollInterval, lastErr)
+
+serverReady:
 	// Create HTTP client
 	client := &http.Client{Timeout: 5 * time.Second}
-	baseURL := fmt.Sprintf("http://localhost:%s", port)
 
 	// Return cleanup function
 	cleanup := func() {
