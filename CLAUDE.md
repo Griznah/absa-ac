@@ -24,9 +24,8 @@ Discord bot for monitoring Assetto Corsa racing servers with dynamic configurati
 | --------- | ---- | ------------ |
 | `.github/` | GitHub Actions workflows for automated container builds | Setting up CI/CD, understanding release automation |
 | `api/` | HTTP API server with middleware chain, config endpoints, security layers | Understanding API architecture, modifying endpoints, security hardening |
-| `pkg/` | Shared packages including session-based proxy with encryption | Understanding shared components, using proxy package |
+| `pkg/` | Shared packages | Understanding shared components |
 | `plans/` | Working planning documents for executed features | Understanding implementation history, decision rationale for past changes |
-| `api/` | REST API package for dynamic configuration management | Adding/modifying API endpoints, understanding security architecture, implementing middleware |
 | `.claude/` | Claude Code configuration and settings | Understanding Claude-specific tool configuration |
 
 ## Build

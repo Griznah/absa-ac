@@ -20,7 +20,6 @@ WORKDIR /app
 
 # Copy binary from builder
 COPY --from=builder /app/bot .
-COPY --chown=1001:1001 static ./static
 
 # Create non-root user and group
 RUN addgroup -g 1001 absabot && \
@@ -33,8 +32,7 @@ USER 1001
 
 # Expose ports
 # 3001: Bot API server (optional, when API_ENABLED=true)
-# 8080: Proxy server (optional, when PROXY_ENABLED=true)
-EXPOSE 3001 8080
+EXPOSE 3001
 
 # Set environment variables (replace at runtime)
 ENV DISCORD_TOKEN=""

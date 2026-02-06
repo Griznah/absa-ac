@@ -16,5 +16,4 @@
 | `middleware_security_test.go` | Security-focused tests: timing attacks, IP spoofing, memory exhaustion, CORS bypass | Verifying security fixes, testing attack vectors |
 | `integration_security_test.go` | Integration tests for middleware chain order, full request flow through all layers | Validating complete request processing, security layering |
 | `benchmarks_test.go` | Performance benchmarks for config validation, deep merge, Bearer auth comparison | Measuring performance impact, optimizing operations |
-| `static_test.go` | Tests for static file serving with path traversal protection | Validating static file security, path sanitization |
 | `README.md` | Complete architecture documentation: component relationships, middleware layers, design decisions, tradeoffs, security considerations | Understanding API architecture, security design, why decisions were made |

@@ -57,14 +57,7 @@ while IFS= read -r -d '' file; do
     [[ -n "$file" ]] && remove_item "$file" "Test encryption key" || true
 done < <(find . -type f -name "test_key" -path "*/tmp/*" -print0 2>/dev/null || true)
 
-# 2. Playwright test artifacts
-echo ""
-echo "=== Playwright Artifacts ==="
-remove_item "static/test/test-results" "Playwright test results" || true
-remove_item "static/test/playwright-report" "Playwright report" || true
-remove_item "static/test/blob-report" "Playwright blob report" || true
-
-# 3. Go test coverage files
+# 2. Go test coverage files
 echo ""
 echo "=== Go Coverage ==="
 while IFS= read -r -d '' file; do
