@@ -14,19 +14,21 @@ Discord bot for monitoring Assetto Corsa racing servers with dynamic configurati
 | `PODMAN.md` | Podman-specific deployment instructions and examples | Deploying with Podman, understanding container setup |
 | `go.mod` | Go module dependencies and version pinning | Updating dependencies, checking versions |
 | `.gitignore` | Git ignore patterns (binaries, config files, IDE files) | Understanding what's excluded from version control |
-| `.github/workflows/docker-publish.yml` | CI/CD pipeline for automated builds | Understanding release process, modifying build workflow |
+| `.env.example` | Template for environment variables (DISCORD_TOKEN, CHANNEL_ID, API settings) | Setting up local development, configuring deployment |
+| `SECURITY.md` | Security guide: incident response, credential rotation, pre-release checklist | Understanding security procedures, responding to incidents |
 | `CODEBASE_ANALYSIS.md` | Detailed codebase analysis and architecture documentation | Understanding project structure, security considerations |
 | `test_cleanup.sh` | Script for cleaning up test resources | Running test cleanup, managing test artifacts |
+| `test_api_token_fails.sh` | Startup security integration test for API_BEARER_TOKEN validation | Verifying fail-fast token validation, testing security requirements |
+| `test_cors_fails.sh` | Startup security integration test for CORS wildcard validation | Verifying CORS fail-fast behavior, testing production safety checks |
 
 ## Subdirectories
 
 | Directory | What | When to read |
 | --------- | ---- | ------------ |
-| `.github/` | GitHub Actions workflows for automated container builds | Setting up CI/CD, understanding release automation |
+| `.github/workflows/` | CI/CD pipeline for automated container builds and security scanning | Understanding release process, modifying build workflow, setting up CI |
 | `api/` | HTTP API server with middleware chain, config endpoints, security layers | Understanding API architecture, modifying endpoints, security hardening |
-| `pkg/` | Shared packages | Understanding shared components |
+| `pkg/` | Shared packages for internal reuse | Understanding shared components |
 | `plans/` | Working planning documents for executed features | Understanding implementation history, decision rationale for past changes |
-| `.claude/` | Claude Code configuration and settings | Understanding Claude-specific tool configuration |
 
 ## Build
 
