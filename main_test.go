@@ -2259,3 +2259,119 @@ func TestConfigManager_UpdateConfig_Normal(t *testing.T) {
 		t.Errorf("Should have 2 servers, got %d", len(cfg.Servers))
 	}
 }
+
+// TestNewBot_MissingDistDirectory tests that NewBot returns error when webfront is enabled but dist is missing
+func TestNewBot_MissingDistDirectory(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	validConfig := &Config{
+		ServerIP:       "192.168.1.1",
+		UpdateInterval: 30,
+		CategoryOrder:  []string{"Drift"},
+		CategoryEmojis: map[string]string{"Drift": "test"},
+		Servers:        []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
+	}
+
+	data, _ := json.Marshal(validConfig)
+	os.WriteFile(configPath, data, 0644)
+
+	cm := NewConfigManager(configPath, validConfig)
+
+	// Change to temp directory to ensure webfront/dist does not exist
+	origWd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(origWd)
+
+	webfrontCfg := &WebfrontConfig{Enabled: true, Port: "8080"}
+	_, err := NewBot(cm, "test-token", "test-channel", nil, webfrontCfg)
+
+	if err == nil {
+		t.Fatal("Expected error for missing dist directory, got nil")
+	}
+	if !strings.Contains(err.Error(), "webfront dist directory not found") {
+		t.Errorf("Expected error about missing dist, got: %v", err)
+	}
+}
+
+// TestStart_ErrorChannel tests that Bot.Errors channel is initialized with capacity 2
+func TestStart_ErrorChannel(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	validConfig := &Config{
+		ServerIP:       "192.168.1.1",
+		UpdateInterval: 30,
+		CategoryOrder:  []string{"Drift"},
+		CategoryEmojis: map[string]string{"Drift": "test"},
+		Servers:        []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
+	}
+
+	data, _ := json.Marshal(validConfig)
+	os.WriteFile(configPath, data, 0644)
+
+	cm := NewConfigManager(configPath, validConfig)
+
+	// Create bot without API or webfront to test channel initialization alone
+	bot, err := NewBot(cm, "test-token", "test-channel", nil, nil)
+	if err != nil {
+		t.Fatalf("NewBot failed: %v", err)
+	}
+
+	if bot.Errors == nil {
+		t.Fatal("Errors channel should be initialized")
+	}
+
+	if cap(bot.Errors) != 2 {
+		t.Errorf("Expected Errors channel capacity 2, got %d", cap(bot.Errors))
+	}
+}
+
+// TestMain_ErrorChannelConsumer tests that errors sent to the channel can be received
+func TestMain_ErrorChannelConsumer(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	validConfig := &Config{
+		ServerIP:       "192.168.1.1",
+		UpdateInterval: 30,
+		CategoryOrder:  []string{"Drift"},
+		CategoryEmojis: map[string]string{"Drift": "test"},
+		Servers:        []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
+	}
+
+	data, _ := json.Marshal(validConfig)
+	os.WriteFile(configPath, data, 0644)
+
+	cm := NewConfigManager(configPath, validConfig)
+
+	bot, err := NewBot(cm, "test-token", "test-channel", nil, nil)
+	if err != nil {
+		t.Fatalf("NewBot failed: %v", err)
+	}
+
+	if bot.Errors == nil {
+		t.Fatal("Errors channel should be initialized")
+	}
+
+	// Simulate sending an error to the channel
+	testErr := fmt.Errorf("test server error")
+
+	// Non-blocking send should succeed since channel has capacity 2
+	select {
+	case bot.Errors <- testErr:
+		// Successfully sent
+	default:
+		t.Fatal("Failed to send error to buffered channel")
+	}
+
+	// Receive the error
+	select {
+	case receivedErr := <-bot.Errors:
+		if receivedErr.Error() != "test server error" {
+			t.Errorf("Expected test server error, got: %v", receivedErr)
+		}
+	default:
+		t.Fatal("Expected to receive error from channel")
+	}
+}

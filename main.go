@@ -166,6 +166,10 @@ var (
 	apiBearerToken    string
 	apiCorsOrigins    string
 	apiTrustedProxies string
+
+	// Webfront configuration
+	webfrontEnabled bool
+	webfrontPort    string
 )
 
 type Server struct {
@@ -756,6 +760,31 @@ type Bot struct {
 	// API server (optional - nil if disabled)
 	apiServer *api.Server
 	apiCancel context.CancelFunc
+
+	// Webfront server (optional - nil if disabled)
+	webfrontServer *http.Server
+	webfrontCancel context.CancelFunc
+
+	// Errors exposes goroutine failures from API and webfront servers
+	// Buffered channel allows non-blocking send on startup
+	Errors      chan error
+	webfrontWg  sync.WaitGroup
+	webfrontPort string
+}
+
+// APIConfig holds REST API server configuration
+type APIConfig struct {
+	Enabled        bool
+	Port           string
+	BearerToken    string
+	CorsOrigins    string
+	TrustedProxies []string
+}
+
+// WebfrontConfig holds web frontend server configuration
+type WebfrontConfig struct {
+	Enabled bool
+	Port    string
 }
 
 // Config holds application configuration loaded from config.json
@@ -1230,8 +1259,7 @@ func createDiscordSession(token string) (*discordgo.Session, error) {
 
 // NewBot creates a new Bot instance with Discord session and optional API server
 // Accepts dependencies via constructor injection (enables testing with mocks)
-// apiTrustedProxies should be a list of normalized IP addresses (IPv4-mapped IPv6 already converted)
-func NewBot(cfgManager *ConfigManager, token, channelID string, apiEnabled bool, apiPort, apiBearerToken, apiCorsOrigins string, apiTrustedProxies []string) (*Bot, error) {
+func NewBot(cfgManager *ConfigManager, token, channelID string, apiCfg *APIConfig, webfrontCfg *WebfrontConfig) (*Bot, error) {
 	if token == "" {
 		return nil, fmt.Errorf("DISCORD_TOKEN environment variable not set")
 	}
@@ -1239,50 +1267,62 @@ func NewBot(cfgManager *ConfigManager, token, channelID string, apiEnabled bool,
 		return nil, fmt.Errorf("CHANNEL_ID environment variable not set")
 	}
 
+	// Validate webfront dist directory at startup for fail-fast behavior
+	if webfrontCfg != nil && webfrontCfg.Enabled {
+		if _, err := os.Stat("webfront/dist"); err != nil {
+			return nil, fmt.Errorf("webfront dist directory not found: %w", err)
+		}
+	}
+
 	session, err := createDiscordSession(token)
 	if err != nil {
 		return nil, err
 	}
 
+	// Error channel allows API and webfront goroutines to report failures
 	bot := &Bot{
 		session:       session,
 		channelID:     channelID,
 		configManager: cfgManager,
+		Errors:        make(chan error, 2),
 	}
 
-	// Create API server if enabled
-	if apiEnabled {
-		if apiBearerToken == "" {
+	// Create API server if configured
+	if apiCfg != nil && apiCfg.Enabled {
+		if apiCfg.BearerToken == "" {
 			return nil, fmt.Errorf("API_ENABLED=true but API_BEARER_TOKEN is not set")
 		}
 
 		// Parse CORS origins
 		var corsOrigins []string
-		if apiCorsOrigins != "" {
-			corsOrigins = strings.Split(apiCorsOrigins, ",")
+		if apiCfg.CorsOrigins != "" {
+			corsOrigins = strings.Split(apiCfg.CorsOrigins, ",")
 			// Trim whitespace from each origin
 			for i, origin := range corsOrigins {
 				corsOrigins[i] = strings.TrimSpace(origin)
 			}
 		}
 
-		bot.apiServer = api.NewServer(cfgManager, apiPort, apiBearerToken, corsOrigins, apiTrustedProxies, log.Default())
-		log.Printf("API server configured on port %s with CORS origins: %s", apiPort, apiCorsOrigins)
+		bot.apiServer = api.NewServer(cfgManager, apiCfg.Port, apiCfg.BearerToken, corsOrigins, apiCfg.TrustedProxies, log.Default())
+		log.Printf("API server configured on port %s with CORS origins: %s", apiCfg.Port, apiCfg.CorsOrigins)
 	}
 
-	return &Bot{
-		session:       session,
-		channelID:     channelID,
-		configManager: cfgManager,
-		apiServer:     bot.apiServer,
-	}, nil
+	// Initialize webfront server struct if configured
+	if webfrontCfg != nil && webfrontCfg.Enabled {
+		bot.webfrontServer = &http.Server{} // Placeholder, configured in ServeWebfront
+		bot.webfrontPort = webfrontCfg.Port
+		log.Printf("Webfront server enabled on port %s", webfrontCfg.Port)
+	}
+
+	return bot, nil
 }
 
 // Start launches the Discord bot and optional API server
 // Discord bot connects immediately, API server starts in background goroutine
-func (b *Bot) Start() error {
+// Returns error channel for monitoring goroutine failures
+func (b *Bot) Start() (<-chan error, error) {
 	if err := b.session.Open(); err != nil {
-		return fmt.Errorf("failed to open Discord connection: %w", err)
+		return nil, fmt.Errorf("failed to open Discord connection: %w", err)
 	}
 
 	// Start API server in background if configured
@@ -1292,13 +1332,31 @@ func (b *Bot) Start() error {
 
 		go func() {
 			if err := b.apiServer.Start(ctx); err != nil {
-				log.Printf("API server error: %v", err)
+				select {
+				case b.Errors <- fmt.Errorf("API server: %w", err):
+				default:
+				}
 			}
 		}()
 		log.Println("API server started")
 	}
 
-	return nil
+	// Start webfront server in background if configured
+	if b.webfrontServer != nil {
+		ctx, cancel := context.WithCancel(context.Background())
+		b.webfrontCancel = cancel
+
+		go func() {
+			if err := b.ServeWebfront(ctx, b.webfrontPort); err != nil && err != context.Canceled {
+				select {
+				case b.Errors <- fmt.Errorf("webfront server: %w", err):
+				default:
+				}
+			}
+		}()
+	}
+
+	return b.Errors, nil
 }
 
 func (b *Bot) WaitForShutdown() {
@@ -1317,6 +1375,19 @@ func (b *Bot) WaitForShutdown() {
 		}
 	}
 
+	// Stop webfront server if running
+	if b.webfrontCancel != nil {
+		log.Println("Stopping webfront server...")
+		b.webfrontCancel()
+		// Wait for webfront goroutine to complete graceful shutdown
+		b.webfrontWg.Wait()
+	}
+
+	// Close error channel to signal consumer goroutine to exit
+	if b.Errors != nil {
+		close(b.Errors)
+	}
+
 	// Cleanup config manager (stop debounce timer)
 	if b.configManager != nil {
 		b.configManager.Cleanup()
@@ -1328,6 +1399,75 @@ func (b *Bot) WaitForShutdown() {
 
 	log.Println("Shutdown complete")
 }
+
+// ================= WEBFRONT SERVER =================
+
+// ServeWebfront starts the static file server for the Svelte SPA
+// Serves files from webfront/dist/ directory
+// Implements SPA routing: all non-file paths return index.html
+func (b *Bot) ServeWebfront(ctx context.Context, port string) error {
+	// Verify dist directory exists
+	distPath := "webfront/dist"
+	if _, err := os.Stat(distPath); err != nil {
+		return fmt.Errorf("webfront dist directory not found: %s", distPath)
+	}
+
+	// Create file server for SPA
+	// Use http.FileServer to serve static files
+	fileServer := http.FileServer(http.Dir(distPath))
+
+	// Create handler with SPA routing support
+	mux := http.NewServeMux()
+	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Try to serve the requested file
+		path := r.URL.Path
+
+		// Check if file exists on filesystem
+		fullPath := filepath.Join(distPath, filepath.Clean(path))
+		if _, err := os.Stat(fullPath); err == nil {
+			// File exists, serve it
+			fileServer.ServeHTTP(w, r)
+			return
+		}
+
+		// File doesn't exist, serve index.html for SPA routing
+		http.ServeFile(w, r, filepath.Join(distPath, "index.html"))
+	}))
+
+	b.webfrontServer = &http.Server{
+		Addr:    ":" + port,
+		Handler: mux,
+	}
+
+	// Track goroutine for graceful shutdown
+	b.webfrontWg.Add(1)
+	go func() {
+		defer b.webfrontWg.Done()
+		log.Printf("Webfront server starting on http://0.0.0.0:%s", port)
+		if err := b.webfrontServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			select {
+			case b.Errors <- fmt.Errorf("webfront server: %w", err):
+			default:
+			}
+		}
+	}()
+
+	// Wait for context cancellation
+	<-ctx.Done()
+	log.Println("Shutting down webfront server...")
+
+	// Graceful shutdown with 10 second timeout
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := b.webfrontServer.Shutdown(shutdownCtx); err != nil {
+		return fmt.Errorf("webfront server shutdown failed: %w", err)
+	}
+
+	log.Println("Webfront server stopped")
+	return nil
+}
+
 
 // checkForConfigUpdates wraps checkAndReloadIfNeeded for use in update loop
 func (b *Bot) checkForConfigUpdates() error {
@@ -1405,6 +1545,13 @@ func main() {
 	apiBearerToken = os.Getenv("API_BEARER_TOKEN")
 	apiCorsOrigins = os.Getenv("API_CORS_ORIGINS")
 	apiTrustedProxies = os.Getenv("API_TRUSTED_PROXY_IPS")
+
+	// Read webfront configuration from environment
+	webfrontEnabled = os.Getenv("WEBFRONT_ENABLED") == "true"
+	webfrontPort = os.Getenv("WEBFRONT_PORT")
+	if webfrontPort == "" {
+		webfrontPort = "8080" // Default port
+	}
 
 	// Validate API configuration if enabled
 	var apiTrustedProxyList []string
@@ -1490,16 +1637,47 @@ func main() {
 
 	// Create config manager with initial config
 	configManager := NewConfigManager(getConfigPath(*configPath), cfg)
-	bot, err := NewBot(configManager, token, channelID, apiEnabled, apiPort, apiBearerToken, apiCorsOrigins, apiTrustedProxyList)
+
+	// Construct API config struct
+	var apiCfg *APIConfig
+	if apiEnabled {
+		apiCfg = &APIConfig{
+			Enabled:        apiEnabled,
+			Port:           apiPort,
+			BearerToken:    apiBearerToken,
+			CorsOrigins:    apiCorsOrigins,
+			TrustedProxies: apiTrustedProxyList,
+		}
+	}
+
+	// Construct Webfront config struct
+	var webfrontCfg *WebfrontConfig
+	if webfrontEnabled {
+		webfrontCfg = &WebfrontConfig{
+			Enabled: webfrontEnabled,
+			Port:    webfrontPort,
+		}
+	}
+
+	bot, err := NewBot(configManager, token, channelID, apiCfg, webfrontCfg)
 	if err != nil {
 		log.Fatalf("Failed to create bot: %v", err)
 	}
 
 	bot.registerHandlers()
 
-	if err := bot.Start(); err != nil {
+	errChan, err := bot.Start()
+	if err != nil {
 		log.Fatalf("Failed to start bot: %v", err)
 	}
+
+	// Consume server errors in background goroutine
+	go func() {
+		for err := range errChan {
+			log.Printf("Server error: %v", err)
+		}
+		log.Println("Error channel closed")
+	}()
 
 	// Wait for shutdown signal
 	bot.WaitForShutdown()
