@@ -1,13 +1,13 @@
 # API Package
 
-HTTP API server for dynamic configuration management with middleware chain, authentication, rate limiting, and security layers.
+HTTP API server for dynamic configuration management with middleware chain, authentication, rate limiting, security layers, and embedded admin frontend.
 
 ## Files
 
 | File | What | When to read |
 | ---- | ---- | ------------ |
 | `README.md` | Complete architecture documentation: component relationships, middleware layers, design decisions, tradeoffs, security considerations | Understanding API architecture, security design, why decisions were made |
-| `server.go` | HTTP server with graceful shutdown, context management, CORS/security middleware integration | Understanding API lifecycle, startup/shutdown flow, server configuration |
+| `server.go` | HTTP server with graceful shutdown, context management, CORS/security middleware integration, embedded admin frontend serving, CSRF middleware wiring | Understanding API lifecycle, startup/shutdown flow, server configuration, admin UI embedding |
 | `handlers.go` | HTTP request handlers for config endpoints (GET, PATCH, PUT, validate) | Implementing new endpoints, modifying request/response handling |
 | `middleware.go` | Authentication (Bearer token, constant-time compare), rate limiting (IP validation, incremental cleanup), CORS, security headers, request logging, trusted proxy validation | Adding middleware, modifying auth/security behavior, understanding IP extraction logic |
 | `response.go` | Common response types (ErrorResponse, SuccessResponse) and JSON helpers | Understanding response format, adding new response types |

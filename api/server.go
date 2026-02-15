@@ -2,12 +2,20 @@ package api
 
 import (
 	"context"
+	"embed"
 	"fmt"
+	"io/fs"
 	"log"
 	"net/http"
 	"sync"
 	"time"
 )
+
+// adminFS embeds the web/admin directory for single-binary deployment.
+// Frontend served at /admin/* uses vanilla JS with no build chain.
+//
+//go:embed web/admin
+var adminFS embed.FS
 
 // Server manages the HTTP API for config management
 // Runs in separate goroutine from Discord bot, neither blocks the other
@@ -79,8 +87,10 @@ func (s *Server) Start(ctx context.Context) error {
 	rateLimitMiddleware := RateLimit(10, 20, s.trustedProxies, serverCtx) // 10 req/sec, burst 20
 	loggerMiddleware := Logger(s.logger)
 	authMiddleware := BearerAuth(s.bearerToken, s.trustedProxies)
+	// CSRF defense-in-depth: validates state-changing requests following auth
 
 	var handler http.Handler = mux
+	handler = CSRF(handler)                              // CSRF validation for state-changing requests
 	handler = authMiddleware(handler)                    // Innermost: check auth last
 	handler = rateLimitMiddleware(handler)               // Apply rate limiting before expensive auth
 	handler = loggerMiddleware(handler)                  // Log all requests including rate limited ones
@@ -91,6 +101,20 @@ func (s *Server) Start(ctx context.Context) error {
 
 	// Register routes
 	RegisterRoutes(mux, s)
+
+	// Serve embedded admin frontend at /admin/*
+	// Single binary deployment eliminates need for external web server
+	// /admin route provides clean separation from public /health endpoint
+	adminSubFS, err := fs.Sub(adminFS, "web/admin")
+	if err != nil {
+		return fmt.Errorf("failed to load embedded admin files: %w", err)
+	}
+	fileServer := http.FileServer(http.FS(adminSubFS))
+
+	// CSP override for admin UI: inline scripts required for vanilla JS SPA
+	adminHandler := withCSPForAdmin(fileServer)
+	mux.Handle("GET /admin/", http.StripPrefix("/admin", adminHandler))
+	mux.Handle("GET /admin", http.RedirectHandler("/admin/", http.StatusMovedPermanently))
 
 	// Start server in background
 	s.wg.Add(1)
@@ -137,4 +161,22 @@ func (s *Server) Stop() error {
 	s.wg.Wait()
 
 	return nil
+}
+
+// withCSPForAdmin wraps handler with permissive CSP for admin UI.
+// Vanilla JS SPA requires inline scripts (no build chain).
+// Auth enforced client-side via sessionStorage token.
+func withCSPForAdmin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Override CSP for admin UI to allow inline scripts and styles
+		// Required for vanilla JS SPA without build chain
+		w.Header().Set("Content-Security-Policy",
+			"default-src 'self'; "+
+				"script-src 'self' 'unsafe-inline'; "+
+				"style-src 'self' 'unsafe-inline'")
+
+		// Admin UI bypasses auth (public static files)
+		// Auth enforced client-side via sessionStorage token
+		next.ServeHTTP(w, r)
+	})
 }
