@@ -29,6 +29,51 @@ Discord bot for monitoring Assetto Corsa racing servers with dynamic configurati
 | `api/` | HTTP API server with middleware chain, config endpoints, security layers | Understanding API architecture, modifying endpoints, security hardening |
 | `pkg/` | Shared packages for internal reuse | Understanding shared components |
 | `plans/` | Working planning documents for executed features | Understanding implementation history, decision rationale for past changes |
+| `webfront/` | Svelte 5 SPA web frontend for API configuration management | Building, developing, or deploying the web interface |
+
+## Web Frontend Development
+
+**Architecture:**
+- Svelte 5 SPA with TypeScript, Vite build tool
+- Bearer token form authentication (sessionStorage storage)
+- Static file deployment (served by Go http.FileServer or nginx)
+- Single-page application with conditional routing
+
+**Development:**
+```bash
+cd webfront/
+npm install              # Install dependencies
+npm run dev            # Start Vite dev server (proxies /api to Go backend)
+npm run build          # Production build to dist/
+npm run check          # TypeScript/svelte-check validation
+npm run lint           # ESLint code quality checks
+```
+
+**Environment setup:**
+```bash
+# API Bearer token (get from deployment or generate secure token)
+export API_BEARER_TOKEN="your-secure-token"
+
+# Vite dev server API proxy
+export VITE_API_BASE_URL="http://localhost:3001"
+```
+
+**Building for production:**
+```bash
+# Build Svelte app
+cd webfront/ && npm run build
+
+# Output: webfront/dist/
+# - index.html
+# - assets/*.js (minified, hashed)
+# - assets/*.css (minified, hashed)
+```
+
+**Deployment:**
+- Option A: Go serves static files (WEBFRONT_ENABLED env var)
+- Option B: nginx serves static files, proxies /api to Go backend
+
+See `webfront/README.md` for quick start guide and `webfront/CLAUDE.md` for detailed documentation.
 
 ## Build
 
@@ -63,6 +108,10 @@ export API_PORT="3001"
 export API_BEARER_TOKEN="your-secure-token"
 export API_CORS_ORIGINS="https://example.com"
 export API_TRUSTED_PROXY_IPS=""
+
+# Optional: Enable web frontend (requires API_ENABLED)
+export WEBFRONT_ENABLED="true"
+export WEBFRONT_PORT="8080"
 ```
 
 **Running locally:**

@@ -1,0 +1,289 @@
+{
+  "plan_id": "5c517d02-6042-4488-b8ea-74f0fee26900",
+  "created_at": "2026-02-13T23:03:07.399247",
+  "frozen_at": null,
+  "overview": {
+    "title": "Fix Web Frontend Integration Bugs",
+    "problem": "Critical bugs in webfront integration prevent the Svelte SPA from being served: double webfrontServer initialization (lines 1283 + 1399), goroutine errors only logged (not propagated), dist directory validated at runtime instead of startup, and NewBot has 9 parameters creating maintenance burden.",
+    "approach": "Fix critical bugs with minimal disruption: correct double initialization, add error channel for goroutine failure propagation, align webfront server pattern with existing api.Server architecture, add config structs to reduce parameter count, validate dist directory at startup, maintain backward compatibility."
+  },
+  "planning_context": {
+    "decisions": [
+      {
+        "id": "DL-001",
+        "version": 1,
+        "decision": "Use error channel pattern for goroutine error propagation",
+        "reasoning": "Start() spawns goroutines for webfront and API servers -> goroutine errors only logged via log.Printf -> failures undetectable by caller -> error channel exposes failures to main() for monitoring and potential shutdown"
+      },
+      {
+        "id": "DL-002",
+        "version": 1,
+        "decision": "Align webfront server with api.Server pattern",
+        "reasoning": "api.Server has mature pattern with Start(ctx) blocking until context done, stored cancel func, sync.WaitGroup for goroutine tracking -> reuse proven architecture -> consistent lifecycle management across servers"
+      },
+      {
+        "id": "DL-003",
+        "version": 1,
+        "decision": "Add config structs to reduce constructor parameters",
+        "reasoning": "NewBot has 9 parameters -> each new feature adds more -> extract APIConfig and WebfrontConfig structs -> reduced parameter count -> easier to extend and test"
+      },
+      {
+        "id": "DL-004",
+        "version": 1,
+        "decision": "Validate dist directory at startup, not per-request",
+        "reasoning": "Missing dist directory causes silent failure at runtime (line 1372-1375) -> fail fast with clear error message at NewBot time -> prevents confusing runtime errors"
+      },
+      {
+        "id": "DL-005",
+        "version": 1,
+        "decision": "Keep global variables but populate from config struct",
+        "reasoning": "Global webfrontEnabled/webfrontPort used in multiple places -> full removal is larger refactor scope -> pass config struct to NewBot -> populate globals from struct -> backward compatible"
+      },
+      {
+        "id": "DL-006",
+        "version": 1,
+        "decision": "Fix NewBot to return local bot variable directly instead of creating new struct",
+        "reasoning": "Current code creates new struct at line 1287-1293 with zero-value fields -> loses server references populated in local bot variable -> return bot directly instead of &Bot{...}"
+      }
+    ],
+    "rejected_alternatives": [
+      {
+        "id": "RA-001",
+        "alternative": "Complete architecture refactor to separate services",
+        "rejection_reason": "Too disruptive for bug fix scope",
+        "decision_ref": "DL-001"
+      },
+      {
+        "id": "RA-002",
+        "alternative": "Add compression/caching middleware",
+        "rejection_reason": "Deferred - current priority is fixing critical bugs",
+        "decision_ref": "DL-001"
+      },
+      {
+        "id": "RA-003",
+        "alternative": "Extract webfront to separate package",
+        "rejection_reason": "Premature - fix bugs first, refactor later if needed",
+        "decision_ref": "DL-002"
+      }
+    ],
+    "constraints": [
+      "MUST fix double webfrontServer initialization (lines 1283 + 1399)",
+      "MUST propagate goroutine errors to caller (currently only logged)",
+      "MUST validate dist directory at startup, not runtime",
+      "MUST maintain backward compatibility with env vars",
+      "MUST NOT break existing API server or Discord bot",
+      "SHOULD reduce NewBot parameter count from 9 via config structs"
+    ],
+    "risks": [
+      {
+        "id": "R-001",
+        "risk": "Error channel consumer may not read errors fast enough",
+        "mitigation": "Use buffered channel (size 2) to allow both API and webfront errors without blocking",
+        "anchor": "main.go:Start()",
+        "decision_ref": "DL-001"
+      },
+      {
+        "id": "R-002",
+        "risk": "Config struct changes may affect test mocks",
+        "mitigation": "Update test mocks to construct config structs from parameters",
+        "anchor": "main_test.go",
+        "decision_ref": "DL-003"
+      }
+    ]
+  },
+  "invisible_knowledge": {
+    "system": "Bot struct contains webfrontServer *http.Server and webfrontCancel context.CancelFunc. NewBot creates placeholder http.Server{} at line 1283, immediately overwritten by ServeWebfront at line 1399. api.Server pattern in api/server.go uses sync.WaitGroup for goroutine tracking with Start/Stop lifecycle. Graceful shutdown order: cancel contexts -> wait for servers -> close Discord session.",
+    "invariants": [
+      "Bot.apiServer and Bot.webfrontServer are nil when disabled",
+      "Discord session opens before API/webfront servers start",
+      "Graceful shutdown order: cancel contexts -> wait for servers -> close Discord session",
+      "Error channel is buffered (size 2) and non-blocking for goroutine startup"
+    ],
+    "tradeoffs": [
+      "Config structs add indirection but reduce parameter explosion",
+      "Error channel requires consumer but enables failure detection",
+      "Dist validation at startup adds init time but prevents silent runtime failures"
+    ]
+  },
+  "milestones": [
+    {
+      "id": "M-001",
+      "number": 1,
+      "name": "Add config structs and fix NewBot return",
+      "files": ["main.go"],
+      "flags": [],
+      "requirements": [
+        "Define APIConfig struct with Port, BearerToken, CorsOrigins, TrustedProxies fields",
+        "Define WebfrontConfig struct with Enabled, Port fields",
+        "NewBot accepts config structs instead of 9 individual parameters",
+        "NewBot returns local bot variable directly (fixes double initialization bug)",
+        "Validate dist directory at startup in NewBot when webfront enabled",
+        "Maintain backward compatibility by populating global variables from config struct"
+      ],
+      "acceptance_criteria": [
+        "NewBot signature has 5 parameters instead of 9",
+        "go build succeeds",
+        "webfrontServer is non-nil when webfrontEnabled=true",
+        "Missing dist directory fails at NewBot with clear error message"
+      ],
+      "tests": [],
+      "code_intents": [
+        {
+          "id": "CI-M-001-001",
+          "file": "main.go",
+          "function": "type definitions",
+          "behavior": "Define APIConfig and WebfrontConfig structs after existing Config struct definition. APIConfig contains Port, BearerToken, CorsOrigins, TrustedProxies. WebfrontConfig contains Enabled, Port.",
+          "decision_refs": ["DL-003"]
+        },
+        {
+          "id": "CI-M-001-002",
+          "file": "main.go",
+          "function": "NewBot",
+          "behavior": "Update NewBot signature to accept cfgManager, token, channelID, apiCfg *APIConfig, webfrontCfg *WebfrontConfig. Return local bot variable directly instead of creating new struct. Validate dist directory at startup when webfrontCfg.Enabled is true.",
+          "decision_refs": ["DL-003", "DL-004", "DL-005", "DL-006"]
+        },
+        {
+          "id": "CI-M-001-003",
+          "file": "main.go",
+          "function": "main",
+          "behavior": "Construct APIConfig and WebfrontConfig structs from environment variables before calling NewBot. Pass config structs to NewBot instead of individual parameters.",
+          "decision_refs": ["DL-003", "DL-005"]
+        }
+      ],
+      "code_changes": [],
+      "documentation": {},
+      "is_documentation_only": false,
+      "delegated_to": null
+    },
+    {
+      "id": "M-002",
+      "number": 2,
+      "name": "Add error channel and align webfront with api.Server pattern",
+      "files": ["main.go"],
+      "flags": [],
+      "requirements": [
+        "Add Errors chan error field to Bot struct (buffered, size 2)",
+        "Add webfrontWg sync.WaitGroup field to Bot struct",
+        "Initialize error channel in NewBot",
+        "Update Start() to return (<-chan error, error) for goroutine failure monitoring",
+        "ServeWebfront uses WaitGroup pattern like api.Server",
+        "Both API and webfront goroutines send errors to error channel",
+        "main() starts goroutine to log errors from channel"
+      ],
+      "acceptance_criteria": [
+        "Start() returns (<-chan error, error)",
+        "Error channel capacity is 2",
+        "Webfront server errors are sent to error channel",
+        "API server errors are sent to error channel",
+        "WaitForShutdown waits for webfrontWg after context cancellation"
+      ],
+      "tests": [],
+      "code_intents": [
+        {
+          "id": "CI-M-002-001",
+          "file": "main.go",
+          "function": "Bot struct",
+          "behavior": "Add Errors chan error field (buffered size 2), webfrontWg sync.WaitGroup field for goroutine tracking.",
+          "decision_refs": ["DL-001", "DL-002"]
+        },
+        {
+          "id": "CI-M-002-002",
+          "file": "main.go",
+          "function": "NewBot",
+          "behavior": "Initialize bot.Errors = make(chan error, 2) after creating bot instance.",
+          "decision_refs": ["DL-001"]
+        },
+        {
+          "id": "CI-M-002-003",
+          "file": "main.go",
+          "function": "Start",
+          "behavior": "Change signature to return (<-chan error, error). API and webfront goroutines send errors to b.Errors using non-blocking select. Return b.Errors as first return value.",
+          "decision_refs": ["DL-001"]
+        },
+        {
+          "id": "CI-M-002-004",
+          "file": "main.go",
+          "function": "ServeWebfront",
+          "behavior": "Add b.webfrontWg.Add(1) before goroutine, defer b.webfrontWg.Done() at start of goroutine. Remove triple-nested goroutine pattern. Send errors to b.Errors channel.",
+          "decision_refs": ["DL-002"]
+        },
+        {
+          "id": "CI-M-002-005",
+          "file": "main.go",
+          "function": "WaitForShutdown",
+          "behavior": "Add b.webfrontWg.Wait() after b.webfrontCancel() call to wait for graceful shutdown completion.",
+          "decision_refs": ["DL-002"]
+        },
+        {
+          "id": "CI-M-002-006",
+          "file": "main.go",
+          "function": "main",
+          "behavior": "Update Start() call to handle error channel: errChan, err := bot.Start(). Start background goroutine to log errors from errChan.",
+          "decision_refs": ["DL-001"]
+        }
+      ],
+      "code_changes": [],
+      "documentation": {},
+      "is_documentation_only": false,
+      "delegated_to": null
+    },
+    {
+      "id": "M-003",
+      "number": 3,
+      "name": "Add tests for webfront integration",
+      "files": ["main_test.go"],
+      "flags": [],
+      "requirements": [
+        "Test NewBot with webfront enabled returns non-nil webfrontServer",
+        "Test error channel receives webfront startup errors",
+        "Test missing dist directory fails at NewBot with clear error",
+        "Test error channel capacity and non-blocking behavior"
+      ],
+      "acceptance_criteria": [
+        "go test -v -run TestNewBot_WebfrontEnabled passes",
+        "go test -v -run TestNewBot_MissingDistDirectory passes",
+        "go test -v -run TestStart_ErrorChannel passes"
+      ],
+      "tests": [],
+      "code_intents": [
+        {
+          "id": "CI-M-003-001",
+          "file": "main_test.go",
+          "function": "TestNewBot_MissingDistDirectory",
+          "behavior": "Test that NewBot returns error when webfront is enabled but webfront/dist directory does not exist. Use t.TempDir() to create isolated test environment.",
+          "decision_refs": ["DL-004"]
+        },
+        {
+          "id": "CI-M-003-002",
+          "file": "main_test.go",
+          "function": "TestStart_ErrorChannel",
+          "behavior": "Test that Bot.Errors channel is initialized with capacity 2 and supports non-blocking send. Verify channel works correctly.",
+          "decision_refs": ["DL-001"]
+        }
+      ],
+      "code_changes": [],
+      "documentation": {},
+      "is_documentation_only": false,
+      "delegated_to": null
+    }
+  ],
+  "waves": [
+    {
+      "id": "W-001",
+      "wave": 1,
+      "milestones": ["M-001"]
+    },
+    {
+      "id": "W-002",
+      "wave": 2,
+      "milestones": ["M-002"]
+    },
+    {
+      "id": "W-003",
+      "wave": 3,
+      "milestones": ["M-003"]
+    }
+  ],
+  "diagram_graphs": [],
+  "readme_entries": []
+}

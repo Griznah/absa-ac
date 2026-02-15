@@ -1,0 +1,669 @@
+{
+  "schema_version": 2,
+  "plan_id": "PLAN-webfront-001",
+  "created_at": "2026-02-13T00:00:00Z",
+  "frozen_at": null,
+  "overview": {
+    "title": "Svelte 5 SPA Web Frontend for AC Discord Bot REST API",
+    "problem": "Admin team needs browser-based UI for managing bot configuration without SSH/CLI access. Existing REST API provides endpoints but requires curl/HTTP clients for interaction.",
+    "approach": "Build Svelte 5 SPA with TypeScript, Vite build tool, and Bearer token authentication (sessionStorage). Deploy as static files served by Go http.FileServer or nginx."
+  },
+  "planning_context": {
+    "decisions": [
+      {
+        "id": "DL-001",
+        "decision": "Svelte 5 SPA with TypeScript",
+        "reasoning_chain": "Svelte 5 provides smaller bundle (~17KB vs ~42KB React) -> Compile-time framework eliminates virtual DOM overhead -> Runes ($state, $derived) offer more intuitive reactivity than Svelte 4 stores -> TypeScript strict mode reduces runtime errors in API interaction code -> Build size, runtime performance, type safety, developer ergonomics optimized",
+        "timestamp": "2026-02-13T00:00:00Z"
+      },
+      {
+        "id": "DL-002",
+        "decision": "Bearer token form authentication with sessionStorage",
+        "reasoning_chain": "Existing API_BEARER_TOKEN infrastructure requires no new credentials -> sessionStorage auto-clears on browser close reduces persistent XSS exposure -> Custom UI form provides better UX than browser Basic Auth popup -> Enables explicit logout functionality -> Reuses existing security model, session-limited auth matches admin use case",
+        "timestamp": "2026-02-13T00:00:00Z"
+      },
+      {
+        "id": "DL-003",
+        "decision": "Vite as build tool with dev server API proxy",
+        "reasoning_chain": "Vite is official Svelte build tool -> Instant HMR for fast development -> Optimized production builds with Rollup -> Native ES module support -> Zero-config TypeScript handling -> Dev server proxies /api to Go backend at localhost:3001 -> Best-in-class DX, separate frontend/backend processes in dev",
+        "timestamp": "2026-02-13T00:00:00Z"
+      },
+      {
+        "id": "DL-004",
+        "decision": "Static file deployment (Go http.FileServer)",
+        "reasoning_chain": "No server-side rendering complexity -> Single container deployment -> Can be served by nginx alternatively -> Build artifacts are environment-agnostic -> All business logic remains in Go API -> Deployment flexibility, simpler operations",
+        "timestamp": "2026-02-13T00:00:00Z"
+      },
+      {
+        "id": "DL-005",
+        "decision": "Single-page application (no multi-page routing)",
+        "reasoning_chain": "Config editor is single-screen application -> Conditional rendering in App.svelte sufficient -> No complex router needed -> Reduces bundle size -> Simpler mental model, less code",
+        "timestamp": "2026-02-13T00:00:00Z"
+      }
+    ],
+    "rejected_alternatives": [
+      {
+        "id": "RA-001",
+        "alternative": "React with Vite",
+        "rejection_reason": "Larger bundle size (~42KB vs ~17KB Svelte), virtual DOM overhead for simple CRUD UI, more boilerplate code. Svelte provides same DX with smaller runtime.",
+        "decision_ref": "DL-001"
+      },
+      {
+        "id": "RA-002",
+        "alternative": "Basic Auth with nginx",
+        "rejection_reason": "Requires managing additional user credentials (WEBFRONT_USERNAME/PASSWORD), browser cannot logout without closing browser, less polished UX for admin interface.",
+        "decision_ref": "DL-002"
+      },
+      {
+        "id": "RA-003",
+        "alternative": "localStorage for token",
+        "rejection_reason": "Persists across browser sessions, increases attack surface if XSS vulnerability found, harder to implement logout functionality.",
+        "decision_ref": "DL-002"
+      },
+      {
+        "id": "RA-004",
+        "alternative": "SvelteKit (SSR)",
+        "rejection_reason": "Adds complexity with server-side rendering, requires Node.js server or adapter configuration, overkill for single-page CRUD app. Static build is simpler.",
+        "decision_ref": "DL-004"
+      },
+      {
+        "id": "RA-005",
+        "alternative": "Vanilla JS with no build",
+        "rejection_reason": "No type safety, harder to maintain as UI grows, no hot module replacement, manual DOM manipulation is more error-prone than Svelte's reactivity.",
+        "decision_ref": "DL-001"
+      },
+      {
+        "id": "RA-006",
+        "alternative": "OAuth2/Session-based auth",
+        "rejection_reason": "Requires additional API endpoints, session storage backend, CSRF tokens. Overkill for single-admin or small-team use case. Bearer token already exists.",
+        "decision_ref": "DL-002"
+      }
+    ],
+    "constraints": [
+      {
+        "id": "C-001",
+        "type": "technical",
+        "description": "MUST use Svelte 5 with TypeScript strict mode and Vite build tool",
+        "source": "user-specified"
+      },
+      {
+        "id": "C-002",
+        "type": "technical",
+        "description": "MUST use Bearer token authentication via custom login form (sessionStorage storage)",
+        "source": "user-specified"
+      },
+      {
+        "id": "C-003",
+        "type": "technical",
+        "description": "MUST deploy as static files served by Go http.FileServer or nginx",
+        "source": "user-specified"
+      },
+      {
+        "id": "C-004",
+        "type": "technical",
+        "description": "MUST integrate with existing REST API (API_PORT default 3001, API_BEARER_TOKEN)",
+        "source": "user-specified"
+      },
+      {
+        "id": "C-005",
+        "type": "technical",
+        "description": "MUST support ES2020+ browsers (Edge 88+, Firefox 78+, Chrome 80+, Safari 14+)",
+        "source": "doc-derived"
+      },
+      {
+        "id": "C-006",
+        "type": "organizational",
+        "description": "SHOULD target small admin team (1-5 users) with no dedicated frontend developer",
+        "source": "user-specified"
+      },
+      {
+        "id": "C-007",
+        "type": "technical",
+        "description": "Containerfile SHOULD build Svelte app during docker build",
+        "source": "user-specified"
+      }
+    ],
+    "risks": [
+      {
+        "id": "R-001",
+        "risk": "XSS through sessionStorage token exposure",
+        "mitigation": "Svelte auto-escaping prevents XSS by default, CSP headers, no innerHTML usage",
+        "anchor": "webfront/src/lib/authStore.ts",
+        "decision_ref": "DL-002"
+      },
+      {
+        "id": "R-002",
+        "risk": "Token visible in browser DevTools",
+        "mitigation": "Acceptable risk for admin interface, sessionStorage cleared on tab close",
+        "anchor": "webfront/src/lib/authStore.ts",
+        "decision_ref": "DL-002"
+      },
+      {
+        "id": "R-003",
+        "risk": "CORS misconfiguration blocking API access",
+        "mitigation": "Clear documentation of API_CORS_ORIGINS setup, health check endpoint for validation",
+        "anchor": "main.go:API_CORS_ORIGINS",
+        "decision_ref": "DL-003"
+      },
+      {
+        "id": "R-004",
+        "risk": "Svelte 5 breaking changes (future)",
+        "mitigation": "Pin Svelte version in package.json, follow semver updates",
+        "anchor": "webfront/package.json",
+        "decision_ref": "DL-001"
+      },
+      {
+        "id": "R-005",
+        "risk": "Static file serving exposes source maps",
+        "mitigation": "Disable source maps in production build, use separate dev build",
+        "anchor": "webfront/vite.config.ts",
+        "decision_ref": "DL-003"
+      },
+      {
+        "id": "R-006",
+        "risk": "Token visible in network requests (Bearer header)",
+        "mitigation": "All traffic should use HTTPS in production",
+        "anchor": "SECURITY.md",
+        "decision_ref": "DL-002"
+      }
+    ]
+  },
+  "invisible_knowledge": {
+    "architecture": {
+      "diagram_ascii": "Browser (Client Side)\n  Svelte SPA (compiled to JS)\n    Components: App.svelte, LoginForm.svelte, Dashboard.svelte\n    Stores/Services: authStore.ts, apiClient.ts, configStore.ts, types.ts\n  Static File Server (nginx OR Go http.FileServer)\n    Serves: index.html, assets/*.js, assets/*.css\nExisting Go Backend API\n    Endpoints: GET/PATCH/PUT /api/config, /health\n    Middleware: BearerAuth, RateLimit, CORS, SecurityHeaders",
+      "description": "Three-tier architecture: Browser Svelte SPA -> Static File Server -> Go Backend API. Static files are environment-agnostic, API handles all business logic."
+    },
+    "data_flow": {
+      "diagram_ascii": "User Opens Browser -> Svelte App Loads -> authStore.checkSession() -> Token? -> Yes: Dashboard / No: LoginForm\nUser Enters Token -> authStore.login(token) -> apiClient.get('/health') -> Success? -> sessionStorage.setItem -> Navigate Dashboard\nDashboard Loads -> configStore.loadConfig() -> apiClient.get('/api/config') -> Display config\nUser Edits/Save -> configStore.saveConfig(partialData) -> apiClient.patch('/api/config') -> Success/Show Toast\nUser Logout -> authStore.logout() -> sessionStorage.removeItem -> Navigate LoginForm",
+      "description": "Authentication flow uses sessionStorage for token persistence. API client wraps fetch with Bearer token injection. Config store manages state with Svelte 5 runes."
+    },
+    "structure_rationale": "Svelte SPA as client-side only enables deployment flexibility (Go, nginx, CDN). Bearer token in sessionStorage reuses existing API_BEARER_TOKEN infrastructure with auto-clear on close. Static files are environment-agnostic (same build works dev/staging/prod). TypeScript types for config schema provide compile-time validation and IDE autocomplete.",
+    "invariants": [
+      "Token never persisted to disk: sessionStorage only, cleared on browser close",
+      "Token never logged: All API logs redact Bearer tokens (existing Go behavior)",
+      "All config changes go through API: UI never writes files directly, only PATCH/PUT endpoints",
+      "CORS must allow frontend origin: API_CORS_ORIGINS must include frontend URL",
+      "Static files are environment-agnostic: Same dist/ works for dev/staging/prod",
+      "No secrets in client bundle: API token entered by user, never embedded in build"
+    ],
+    "tradeoffs": [
+      "Build complexity vs. type safety: Requires Node.js/npm for build (new dependency for Go project). Acceptable: TypeScript prevents runtime errors, better DX. Build output is still just static files.",
+      "Single-page vs. multi-page: SPA requires client-side routing (or no routing). Simpler for this use case: one dashboard view, no complex navigation.",
+      "Bearer token form vs. OAuth: Bearer form is copy-paste from env var. OAuth requires additional redirect flow. Bearer form accepted: small team, token rotation is manual anyway.",
+      "sessionStorage vs. httpOnly cookie: sessionStorage is accessible to JS, cleared on close. httpOnly cookie is more secure but not accessible to JS. sessionStorage accepted: XSS risk mitigated by CSP, simpler logout."
+    ]
+  },
+  "milestones": [
+    {
+      "id": "M-001",
+      "number": 1,
+      "name": "Svelte Project Setup with TypeScript",
+      "files": [
+        "webfront/package.json",
+        "webfront/svelte.config.js",
+        "webfront/vite.config.ts",
+        "webfront/tsconfig.json",
+        "webfront/src/main.ts",
+        "webfront/src/App.svelte",
+        "webfront/index.html",
+        "webfront/src/app.css",
+        "webfront/.gitignore",
+        "webfront/.eslintrc.cjs"
+      ],
+      "flags": ["security", "needs-rationale"],
+      "requirements": [
+        "Initialize Svelte 5 project with TypeScript strict mode",
+        "Configure Vite with /api proxy to localhost:3001 in dev mode",
+        "Create base App.svelte component with Svelte 5 runes syntax",
+        "Configure ESLint with svelte-plugin",
+        "Set up .gitignore for node_modules, dist, .env",
+        "Add npm scripts: dev, build, preview, check, lint",
+        "Create empty LoginForm and Dashboard component stubs"
+      ],
+      "acceptance_criteria": [
+        "npm install completes without errors",
+        "npm run dev starts Vite dev server on port 5173",
+        "npm run build creates dist/ directory with index.html and assets/",
+        "npm run check runs svelte-check with TypeScript strict mode (no errors)",
+        "App.svelte renders without console errors in browser",
+        "Vite proxies /api requests to http://localhost:3001 in dev mode",
+        "ESLint runs without configuration errors"
+      ],
+      "tests": {
+        "files": [],
+        "type": "manual",
+        "backing": "user-specified",
+        "scenarios": {
+          "normal": "npm install && npm run build succeeds",
+          "edge": "TypeScript error caught by npm run check",
+          "error": "Invalid Svelte syntax caught by linter"
+        }
+      },
+      "code_intents": [
+        {
+          "id": "CI-M-001-001",
+          "file": "webfront/package.json",
+          "function": "dependencies_and_scripts",
+          "behavior": "Dependencies: svelte@^5.50.0, vite@^6.x, typescript@^5.x, @sveltejs/vite-plugin-svelte, eslint, eslint-plugin-svelte. Scripts: dev (Vite server with proxy), build (production build), check (svelte-check), lint (ESLint), preview (static file server).",
+          "decision_refs": ["DL-001", "DL-003"],
+          "params": {}
+        },
+        {
+          "id": "CI-M-001-002",
+          "file": "webfront/vite.config.ts",
+          "function": "dev_server_proxy",
+          "behavior": "Proxy /api requests to http://localhost:3001 in development mode. Enables frontend to call Go backend during development.",
+          "decision_refs": ["DL-003"],
+          "params": {}
+        },
+        {
+          "id": "CI-M-001-003",
+          "file": "webfront/tsconfig.json",
+          "function": "typescript_config",
+          "behavior": "Enable strict mode (\"strict\": true), set moduleResolution to \"bundler\", target ES2020+.",
+          "decision_refs": ["DL-001"],
+          "params": {}
+        },
+        {
+          "id": "CI-M-001-004",
+          "file": "webfront/src/App.svelte",
+          "function": "root_component",
+          "behavior": "Root component with <slot /> for child components. Uses Svelte 5 runes syntax ($state).",
+          "decision_refs": ["DL-001", "DL-005"],
+          "params": {}
+        },
+        {
+          "id": "CI-M-001-005",
+          "file": "webfront/src/main.ts",
+          "function": "entry_point",
+          "behavior": "Mount App.svelte to #app div in index.html.",
+          "decision_refs": ["DL-001"],
+          "params": {}
+        }
+      ],
+      "code_changes": [],
+      "documentation": {},
+      "is_documentation_only": false,
+      "delegated_to": null
+    },
+    {
+      "id": "M-002",
+      "number": 2,
+      "name": "TypeScript Types and API Client",
+      "files": [
+        "webfront/src/types.ts",
+        "webfront/src/lib/apiClient.ts",
+        "webfront/src/lib/configStore.ts",
+        "webfront/src/lib/authStore.ts",
+        "webfront/src/lib/apiClient.test.ts"
+      ],
+      "flags": ["security", "needs-rationale"],
+      "requirements": [
+        "Define TypeScript interfaces matching Go Config struct",
+        "Create apiClient with fetch wrapper for Bearer auth",
+        "Implement authStore using Svelte 5 $state runes",
+        "Implement configStore using Svelte 5 $state runes",
+        "Add error handling for 401/403 responses (clear token, redirect to login)",
+        "Create typed functions for each API endpoint"
+      ],
+      "acceptance_criteria": [
+        "types.ts has interfaces: Config, Server, CategoryEmoji, ErrorResponse",
+        "apiClient.ts exports: getConfig(), patchConfig(), putConfig(), validateConfig(), getHealth()",
+        "apiClient includes Authorization: Bearer <token> header on all requests",
+        "authStore has: login(), logout(), isAuthenticated(), getToken()",
+        "authStore uses sessionStorage for token persistence",
+        "configStore has: loadConfig(), updateConfig(field, value), saveConfig()",
+        "401/403 responses trigger authStore.logout() and redirect to login form",
+        "TypeScript compiles without type errors"
+      ],
+      "tests": {
+        "files": ["webfront/src/lib/apiClient.test.ts"],
+        "type": "unit",
+        "backing": "user-specified",
+        "scenarios": {
+          "normal": "Valid getConfig() returns typed Config object",
+          "edge": "401 response triggers logout",
+          "error": "Network error throws ApiError with details"
+        }
+      },
+      "code_intents": [
+        {
+          "id": "CI-M-002-001",
+          "file": "webfront/src/types.ts",
+          "function": "Config_interfaces",
+          "behavior": "interface Server { name: string; port: number; category: string; } interface Config { server_ip: string; update_interval: number; category_order: string[]; category_emojis: Record<string, string>; servers: Server[]; } interface ErrorResponse { error: string; details?: string; }",
+          "decision_refs": ["DL-001"],
+          "params": {}
+        },
+        {
+          "id": "CI-M-002-002",
+          "file": "webfront/src/lib/apiClient.ts",
+          "function": "fetch_wrapper",
+          "behavior": "class ApiClient with private baseUrl and getToken() callback. Methods: get<T>(path), patch<T>(path, body), put<T>(path, body). Automatic Bearer token injection from authStore. Generic return types for type safety.",
+          "decision_refs": ["DL-002", "DL-004"],
+          "params": {}
+        },
+        {
+          "id": "CI-M-002-003",
+          "file": "webfront/src/lib/authStore.ts",
+          "function": "auth_store",
+          "behavior": "let token = $state<string | null>(null). Initialize token from sessionStorage on load. function login(newToken: string) validates token with /health. function logout() clears sessionStorage and sets token to null.",
+          "decision_refs": ["DL-002"],
+          "params": {}
+        },
+        {
+          "id": "CI-M-002-004",
+          "file": "webfront/src/lib/configStore.ts",
+          "function": "config_store",
+          "behavior": "let config = $state<Config | null>(null). let loading = $state(false). let error = $state<string | null>(null). async function loadConfig() calls apiClient.getConfig().",
+          "decision_refs": ["DL-001", "DL-005"],
+          "params": {}
+        }
+      ],
+      "code_changes": [],
+      "documentation": {},
+      "is_documentation_only": false,
+      "delegated_to": null
+    },
+    {
+      "id": "M-003",
+      "number": 3,
+      "name": "Login Form Component",
+      "files": [
+        "webfront/src/components/LoginForm.svelte",
+        "webfront/src/components/LoginForm.test.ts"
+      ],
+      "flags": ["security", "needs-rationale"],
+      "requirements": [
+        "Create LoginForm component with password input field",
+        "Mask token input (type=\"password\") with visibility toggle",
+        "Show error message for invalid token",
+        "Submit button with loading state",
+        "Auto-focus input on mount",
+        "Clear token from sessionStorage on failed login",
+        "Redirect to Dashboard on successful login",
+        "Add show/hide eye icon for token visibility"
+      ],
+      "acceptance_criteria": [
+        "LoginForm renders with password input and submit button",
+        "Token input is masked by default (dots)",
+        "Eye icon toggles token visibility",
+        "Submit button calls authStore.login(token)",
+        "Loading spinner shows during authentication",
+        "Error message displays on invalid token (401/403)",
+        "Successful login navigates to Dashboard",
+        "Enter key submits form",
+        "Form is accessible (labels, ARIA attributes)"
+      ],
+      "tests": {
+        "files": ["webfront/src/components/LoginForm.test.ts"],
+        "type": "unit",
+        "backing": "user-specified",
+        "scenarios": {
+          "normal": "Valid token redirects to Dashboard",
+          "edge": "Empty input shows validation error",
+          "error": "Invalid token shows error message"
+        }
+      },
+      "code_intents": [
+        {
+          "id": "CI-M-003-001",
+          "file": "webfront/src/components/LoginForm.svelte",
+          "function": "login_form",
+          "behavior": "Use Svelte 5 <script> with runes syntax. let tokenInput = $state(\"\"). let showToken = $state(false). let errorMsg = $state<string | null>(null). let loading = $state(false). async function handleSubmit() calls authStore.login(), handles errors.",
+          "decision_refs": ["DL-002", "DL-005"],
+          "params": {}
+        }
+      ],
+      "code_changes": [],
+      "documentation": {},
+      "is_documentation_only": false,
+      "delegated_to": null
+    },
+    {
+      "id": "M-004",
+      "number": 4,
+      "name": "Dashboard Component",
+      "files": [
+        "webfront/src/components/Dashboard.svelte",
+        "webfront/src/components/ServerList.svelte",
+        "webfront/src/components/CategoryEditor.svelte",
+        "webfront/src/components/GeneralSettings.svelte",
+        "webfront/src/components/Dashboard.test.ts"
+      ],
+      "flags": ["security", "needs-rationale"],
+      "requirements": [
+        "Create Dashboard as main config view",
+        "Split into sections: General Settings, Categories, Servers",
+        "Add Save Changes button with loading state",
+        "Add Refresh button to reload from API",
+        "Show success/error toasts after save",
+        "Validate inputs (port range, required fields)",
+        "Add Logout button in header",
+        "Show loading spinner during initial load"
+      ],
+      "acceptance_criteria": [
+        "Dashboard displays all config fields",
+        "GeneralSettings edits server_ip and update_interval",
+        "CategoryEditor edits category_order and category_emojis",
+        "ServerList displays servers array with add/edit/delete",
+        "Save button sends PATCH request to /api/config",
+        "Success toast shows on save",
+        "Error toast shows with details on failure",
+        "Logout button clears token and redirects to LoginForm",
+        "All inputs use Svelte two-way binding ($bind)",
+        "Form validation prevents invalid saves (port range, required fields)"
+      ],
+      "tests": {
+        "files": ["webfront/src/components/Dashboard.test.ts"],
+        "type": "unit",
+        "backing": "user-specified",
+        "scenarios": {
+          "normal": "Edit field, save, success toast shows",
+          "edge": "Invalid port shows validation error",
+          "error": "API error shows error toast"
+        }
+      },
+      "code_intents": [
+        {
+          "id": "CI-M-004-001",
+          "file": "webfront/src/components/Dashboard.svelte",
+          "function": "dashboard_main",
+          "behavior": "Use configStore for state. let showSaveToast = $state(false). let showErrorToast = $state(false). let toastMessage = $state(\"\"). async function handleSave() calls configStore.saveConfig(). Layout: Header (title, logout button), Main (form sections), Footer (save/cancel buttons).",
+          "decision_refs": ["DL-001", "DL-005"],
+          "params": {}
+        },
+        {
+          "id": "CI-M-004-002",
+          "file": "webfront/src/components/ServerList.svelte",
+          "function": "server_list_table",
+          "behavior": "Use <table> for servers display. Add row button adds empty server. Delete button removes server. Each row: name (text), port (number), category (select from category_order).",
+          "decision_refs": ["DL-005"],
+          "params": {}
+        },
+        {
+          "id": "CI-M-004-003",
+          "file": "webfront/src/components/CategoryEditor.svelte",
+          "function": "category_editor",
+          "behavior": "category_order: drag-and-drop list or up/down buttons. category_emojis: key-value pairs editor.",
+          "decision_refs": ["DL-005"],
+          "params": {}
+        }
+      ],
+      "code_changes": [],
+      "documentation": {},
+      "is_documentation_only": false,
+      "delegated_to": null
+    },
+    {
+      "id": "M-005",
+      "number": 5,
+      "name": "App Routing and Layout",
+      "files": [
+        "webfront/src/App.svelte",
+        "webfront/src/routes.ts",
+        "webfront/src/App.test.ts"
+      ],
+      "flags": ["needs-rationale"],
+      "requirements": [
+        "Implement simple routing in App.svelte (conditional rendering)",
+        "Routes: LOGIN, DASHBOARD (no complex router needed)",
+        "Protect Dashboard route (redirect to login if not authenticated)",
+        "Add global error boundary for unhandled errors",
+        "Add loading state during initial auth check",
+        "Add toast notification system (success/error messages)"
+      ],
+      "acceptance_criteria": [
+        "App.svelte shows LoginForm if not authenticated",
+        "App.svelte shows Dashboard if authenticated",
+        "Direct access to Dashboard redirects to login if no token",
+        "Unhandled errors show error page",
+        "Loading spinner shows during initial auth check",
+        "Toast notifications appear fixed at top/bottom of screen"
+      ],
+      "tests": {
+        "files": ["webfront/src/App.test.ts"],
+        "type": "unit",
+        "backing": "user-specified",
+        "scenarios": {
+          "normal": "Valid token shows Dashboard",
+          "edge": "No token shows LoginForm",
+          "error": "API error during auth check shows LoginForm"
+        }
+      },
+      "code_intents": [
+        {
+          "id": "CI-M-005-001",
+          "file": "webfront/src/App.svelte",
+          "function": "app_routing",
+          "behavior": "Import onMount from 'svelte'. Import authStore, LoginForm, Dashboard. let initialized = $state(false). onMount(async () => { await authStore.checkSession(); initialized = true; }). Conditional render: !initialized -> LoadingSpinner, !authStore.isAuthenticated() -> LoginForm, else -> Dashboard.",
+          "decision_refs": ["DL-005"],
+          "params": {}
+        }
+      ],
+      "code_changes": [],
+      "documentation": {},
+      "is_documentation_only": false,
+      "delegated_to": null
+    },
+    {
+      "id": "M-006",
+      "number": 6,
+      "name": "Production Build and Go Integration",
+      "files": [
+        "main.go",
+        "Containerfile",
+        "webfront/.env.example",
+        "PODMAN.md"
+      ],
+      "flags": ["security", "needs-rationale"],
+      "requirements": [
+        "Add WEBFRONT_ENABLED env var (default: false)",
+        "Serve static files from webfront/dist/ when enabled",
+        "Add /webfront path prefix for static assets",
+        "Update Containerfile to copy dist/ after build",
+        "Add WEBFRONT_PORT env var (default: 8080)",
+        "Document CORS setup in PODMAN.md (API_CORS_ORIGINS)",
+        "Add health check for static file serving"
+      ],
+      "acceptance_criteria": [
+        "WEBFRONT_ENABLED=true serves Svelte app on WEBFRONT_PORT",
+        "WEBFRONT_ENABLED=false skips webfront",
+        "Containerfile builds Svelte app during docker build",
+        "Container includes webfront/dist/ directory",
+        "PODMAN.md documents API_CORS_ORIGINS setup for webfront",
+        "Static files served with correct Content-Type headers",
+        "SPA routing works (all paths return index.html)"
+      ],
+      "tests": {
+        "files": [],
+        "type": "manual",
+        "backing": "user-specified",
+        "scenarios": {
+          "normal": "Container serves Svelte app at /webfront",
+          "edge": "WEBFRONT_ENABLED=false skips serving",
+          "error": "Missing dist/ fails container build"
+        }
+      },
+      "code_intents": [
+        {
+          "id": "CI-M-006-001",
+          "file": "main.go",
+          "function": "static_file_serving",
+          "behavior": "Add webfront env vars (WEBFRONT_ENABLED, WEBFRONT_PORT). Add static file server using http.FileServer. Serve on separate port from API. Use embed.FS or filesystem path for dist/.",
+          "decision_refs": ["DL-004"],
+          "params": {}
+        },
+        {
+          "id": "CI-M-006-002",
+          "file": "Containerfile",
+          "function": "container_build",
+          "behavior": "Install Node.js for build. WORKDIR /app/webfront. COPY webfront/package*.json ./. RUN npm ci. COPY webfront/ ./. RUN npm run build. Copy dist to final location. EXPOSE 3001 8080.",
+          "decision_refs": ["DL-004", "C-007"],
+          "params": {}
+        }
+      ],
+      "code_changes": [],
+      "documentation": {},
+      "is_documentation_only": false,
+      "delegated_to": null
+    },
+    {
+      "id": "M-007",
+      "number": 7,
+      "name": "Documentation",
+      "files": [
+        "webfront/README.md",
+        "webfront/CLAUDE.md",
+        "CLAUDE.md"
+      ],
+      "flags": [],
+      "requirements": [
+        "Document development workflow (npm run dev)",
+        "Document production build process (npm run build)",
+        "Document API integration (CORS setup)",
+        "Document environment variables",
+        "Document deployment options (Go vs. nginx)",
+        "Document authentication flow (Bearer token)"
+      ],
+      "acceptance_criteria": [
+        "README.md exists with quick start guide",
+        "CLAUDE.md exists with file index",
+        "Root CLAUDE.md updated with webfront section",
+        ".env.example documented"
+      ],
+      "tests": {
+        "files": [],
+        "type": "manual",
+        "backing": "user-specified",
+        "scenarios": {}
+      },
+      "code_intents": [],
+      "code_changes": [],
+      "documentation": {},
+      "is_documentation_only": true,
+      "delegated_to": "@agent-technical-writer"
+    }
+  ],
+  "milestone_dependencies": {
+    "diagram_ascii": "M-001 --> M-002\n        |\n        +--> M-003 --> M-005 --> M-006 --> M-007\n        |\n        +--> M-004 --> M-005",
+    "waves": [
+      {
+        "wave": 1,
+        "milestones": ["M-001", "M-002"]
+      },
+      {
+        "wave": 2,
+        "milestones": ["M-003", "M-004", "M-005"]
+      },
+      {
+        "wave": 3,
+        "milestones": ["M-006"]
+      },
+      {
+        "wave": 4,
+        "milestones": ["M-007"]
+      }
+    ]
+  }
+}
