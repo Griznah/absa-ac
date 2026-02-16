@@ -251,6 +251,33 @@ curl -X POST \
   - Startup will exit with error if unsafe/misconfigured
 - **Security headers**: X-Content-Type-Options, X-Frame-Options, CSP included
 
+### Web Admin UI
+
+When the REST API is enabled, a web-based admin interface is available at `/admin/` for managing configuration through a browser.
+
+**Accessing the UI:**
+```
+http://localhost:3001/admin/
+```
+
+**Features:**
+- Login screen with bearer token authentication
+- Visual config editor for servers, categories, and settings
+- Real-time validation feedback
+- CSRF protection for all state-changing operations
+
+**Authentication:**
+- Uses the same `API_BEARER_TOKEN` as the REST API
+- Token stored in `sessionStorage` (cleared on tab close for security)
+- No server-side sessions required
+
+**Example:**
+1. Generate a secure token: `head -c 48 /dev/urandom | base64`
+2. Set `API_BEARER_TOKEN` environment variable
+3. Enable API: `API_ENABLED=true`
+4. Navigate to `http://your-server:3001/admin/`
+5. Enter your bearer token to login
+
 ### API Trusted Proxy IPs
 
 `API_TRUSTED_PROXY_IPS`: Comma-separated list of trusted proxy IP addresses (empty default). Required when deploying behind reverse proxy (nginx, AWS ALB, Cloudflare). Leave empty for direct internet exposure. See api/README.md for configuration details.
