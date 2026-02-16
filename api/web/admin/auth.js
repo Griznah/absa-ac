@@ -92,12 +92,16 @@ const Auth = {
     // Fetch CSRF token from API endpoint.
     // Called following successful bearer token validation (ref: DL-004).
     async fetchCSRFToken() {
-        const response = await APIClient.get('/api/csrf-token');
-        if (response.ok && response.data?.csrf_token) {
-            this.setCSRFToken(response.data.csrf_token);
-            return true;
+        try {
+            const response = await APIClient.get('/csrf-token');
+            if (response.ok && response.data?.csrf_token) {
+                this.setCSRFToken(response.data.csrf_token);
+                return true;
+            }
+            return false;
+        } catch {
+            return false;
         }
-        return false;
     }
 };
 

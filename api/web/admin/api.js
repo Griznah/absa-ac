@@ -54,7 +54,12 @@ const APIClient = {
             options.body = JSON.stringify(body);
         }
 
-        const response = await fetch(`${this.baseURL}${path}`, options);
+        let response;
+        try {
+            response = await fetch(`${this.baseURL}${path}`, options);
+        } catch (networkError) {
+            return { ok: false, status: 0, error: 'Network error: unable to reach server' };
+        }
 
         // Handle 401 - token expired/invalid
         if (response.status === 401) {
