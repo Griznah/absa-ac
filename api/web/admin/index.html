@@ -1,0 +1,75 @@
+<!-- Admin UI: Single-page app for AC Bot configuration (ref: DL-002). -->
+<!-- Two-screen design: login form, then config editor. -->
+<!-- Security: password input type prevents token visibility. -->
+<!-- Script load order: auth.js -> api.js -> app.js (dependency chain). -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AC Bot Admin</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div id="app">
+        <!-- Login Screen -->
+        <section id="login-screen" class="screen">
+            <h1>AC Bot Configuration</h1>
+            <form id="login-form">
+                <div class="form-group">
+                    <label for="token-input">Bearer Token</label>
+                    <input type="password" id="token-input"
+                           placeholder="Enter API bearer token"
+                           autocomplete="off"
+                           required>
+                </div>
+                <button type="submit" id="login-btn">Login</button>
+                <p id="login-error" class="error-message hidden"></p>
+            </form>
+        </section>
+
+        <!-- Main Config Editor -->
+        <section id="config-screen" class="screen hidden">
+            <header>
+                <h1>Bot Configuration</h1>
+                <button id="logout-btn">Logout</button>
+            </header>
+
+            <main id="config-editor">
+                <!-- Servers Section -->
+                <section class="config-section">
+                    <h2>Servers</h2>
+                    <div id="servers-list"></div>
+                    <button id="add-server-btn">Add Server</button>
+                </section>
+
+                <!-- General Settings -->
+                <section class="config-section">
+                    <h2>Settings</h2>
+                    <div class="form-group">
+                        <label for="interval-input">Update Interval (seconds)</label>
+                        <input type="number" id="interval-input" min="10">
+                    </div>
+                    <div class="form-group">
+                        <label for="category-input">Category ID</label>
+                        <input type="text" id="category-input" placeholder="Discord category ID">
+                    </div>
+                </section>
+
+                <!-- Actions -->
+                <section class="config-section actions">
+                    <button id="validate-btn">Validate</button>
+                    <button id="save-btn">Save Changes</button>
+                </section>
+            </main>
+
+            <div id="status-message" class="hidden"></div>
+        </section>
+    </div>
+
+    <!-- JS Modules -->
+    <script src="auth.js"></script>
+    <script src="api.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
