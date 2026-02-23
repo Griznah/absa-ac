@@ -59,18 +59,24 @@ var servers = []Server{
 		Category: "Drift",
 	},
 	{
+		Name:     "ABSA#6 Drift | Rotating Maps | VDC 5.0",
+		IP:       "",
+		Port:     8086,
+		Category: "Drift",
+	},
+	{
 		Name:     "ABSA#8 Drift | Rotating Maps | SWARM 3.2 Touge",
 		IP:       "",
 		Port:     8088,
 		Category: "Drift",
 	},
 	// -------- TOUGE --------
-	{
-		Name:     "ABSA#6 Race | Touge FAST Lap",
-		IP:       "",
-		Port:     8086,
-		Category: "Touge",
-	},
+//	{
+//		Name:     "ABSA#6 Race | Touge FAST Lap",
+//		IP:       "",
+//		Port:     8086,
+//		Category: "Touge",
+//	},
 	// -------- TRACK --------
 	{
 		Name:     "ABSA#5 Race | Nordschleife Tourist FAST Lap",
