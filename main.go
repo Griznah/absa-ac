@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/bombom/absa-ac/api"
+	"github.com/bombom/absa-ac/pkg/proxy"
 	"github.com/bwmarrin/discordgo"
 	"net"
 )
@@ -756,6 +757,10 @@ type Bot struct {
 	// API server (optional - nil if disabled)
 	apiServer *api.Server
 	apiCancel context.CancelFunc
+
+	// Proxy server (optional - nil if disabled)
+	proxyServer *proxy.Server
+	proxyCancel context.CancelFunc
 }
 
 // Config holds application configuration loaded from config.json
@@ -1231,7 +1236,7 @@ func createDiscordSession(token string) (*discordgo.Session, error) {
 // NewBot creates a new Bot instance with Discord session and optional API server
 // Accepts dependencies via constructor injection (enables testing with mocks)
 // apiTrustedProxies should be a list of normalized IP addresses (IPv4-mapped IPv6 already converted)
-func NewBot(cfgManager *ConfigManager, token, channelID string, apiEnabled bool, apiPort, apiBearerToken, apiCorsOrigins string, apiTrustedProxies []string) (*Bot, error) {
+func NewBot(cfgManager *ConfigManager, token, channelID string, apiEnabled bool, apiPort, apiBearerToken, apiCorsOrigins string, apiTrustedProxies []string, proxyEnabled bool, proxyConfig *proxy.Config) (*Bot, error) {
 	if token == "" {
 		return nil, fmt.Errorf("DISCORD_TOKEN environment variable not set")
 	}
@@ -1270,11 +1275,21 @@ func NewBot(cfgManager *ConfigManager, token, channelID string, apiEnabled bool,
 		log.Printf("API server configured on port %s with CORS origins: %s", apiPort, apiCorsOrigins)
 	}
 
+	// Create proxy server if enabled
+	if proxyEnabled {
+		if proxyConfig == nil {
+			return nil, fmt.Errorf("PROXY_ENABLED=true but proxy config is nil")
+		}
+		bot.proxyServer = proxy.NewServer(*proxyConfig, log.Default())
+		log.Printf("Proxy server configured on port %s forwarding to %s", proxyConfig.Port, proxyConfig.APIURL)
+	}
+
 	return &Bot{
 		session:       session,
 		channelID:     channelID,
 		configManager: cfgManager,
 		apiServer:     bot.apiServer,
+		proxyServer:   bot.proxyServer,
 	}, nil
 }
 
@@ -1298,6 +1313,19 @@ func (b *Bot) Start() error {
 		log.Println("API server started")
 	}
 
+	// Start proxy server in background if configured
+	if b.proxyServer != nil {
+		ctx, cancel := context.WithCancel(context.Background())
+		b.proxyCancel = cancel
+
+		go func() {
+			if err := b.proxyServer.Start(ctx); err != nil {
+				log.Printf("Proxy server error: %v", err)
+			}
+		}()
+		log.Println("Proxy server started")
+	}
+
 	return nil
 }
 
@@ -1307,6 +1335,15 @@ func (b *Bot) WaitForShutdown() {
 
 	<-sigchan
 	log.Println("Shutting down...")
+
+	// Stop proxy server if running
+	if b.proxyServer != nil && b.proxyCancel != nil {
+		log.Println("Stopping proxy server...")
+		b.proxyCancel()
+		if err := b.proxyServer.Stop(); err != nil {
+			log.Printf("Error stopping proxy server: %v", err)
+		}
+	}
 
 	// Stop API server if running
 	if b.apiServer != nil && b.apiCancel != nil {
@@ -1473,6 +1510,18 @@ func main() {
 		}
 	}
 
+	// Proxy configuration
+	proxyEnabled := os.Getenv("PROXY_ENABLED") == "true"
+	var proxyCfg *proxy.Config
+	if proxyEnabled {
+		cfg := proxy.LoadFromEnv()
+		if err := cfg.Validate(); err != nil {
+			log.Fatalf("Proxy configuration error: %v", err)
+		}
+		proxyCfg = &cfg
+		log.Printf("Proxy server enabled on port %s forwarding to %s", cfg.Port, cfg.APIURL)
+	}
+
 	token, channelID, err := validateConfig()
 	if err != nil {
 		log.Fatalf("Configuration error: %v", err)
@@ -1490,7 +1539,7 @@ func main() {
 
 	// Create config manager with initial config
 	configManager := NewConfigManager(getConfigPath(*configPath), cfg)
-	bot, err := NewBot(configManager, token, channelID, apiEnabled, apiPort, apiBearerToken, apiCorsOrigins, apiTrustedProxyList)
+	bot, err := NewBot(configManager, token, channelID, apiEnabled, apiPort, apiBearerToken, apiCorsOrigins, apiTrustedProxyList, proxyEnabled, proxyCfg)
 	if err != nil {
 		log.Fatalf("Failed to create bot: %v", err)
 	}
