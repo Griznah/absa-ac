@@ -135,6 +135,7 @@ bot
 absa-ac
 # Go
 absa-sec-testbin
+/data/
 # Session encryption key (auto-generated on first run)
 .session_key
 # Session storage directory
