@@ -20,13 +20,14 @@ const Auth = {
         return { valid: true };
     },
 
-    // Verify token against API health endpoint
+    // Verify token against protected endpoint (not /health which bypasses auth)
     async verifyToken(token) {
         try {
-            const response = await fetch('/health', {
+            const response = await fetch('/api/config', {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
-            return response.ok;
+            // Any response (even 404) proves auth passed; 401 means invalid token
+            return response.status !== 401;
         } catch {
             return false;
         }

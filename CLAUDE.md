@@ -27,9 +27,9 @@ Discord bot for monitoring Assetto Corsa racing servers with dynamic configurati
 | --------- | ---- | ------------ |
 | `.github/workflows/` | CI/CD pipeline for automated container builds and security scanning | Understanding release process, modifying build workflow, setting up CI |
 | `api/` | HTTP API server with middleware chain, config endpoints, security layers, embedded admin frontend | Understanding API architecture, modifying endpoints, security hardening, admin UI serving |
-| `api/web/` | Web frontend container directory | Understanding frontend asset organization |
 | `api/web/admin/` | Embedded admin frontend: login/config editor SPA with vanilla JS | Understanding admin UI, modifying frontend behavior, security design |
 | `pkg/` | Shared packages for internal reuse | Understanding shared components |
+| `pkg/proxy/` | Reverse proxy for browser-based API access via HTTP Basic Auth | Understanding proxy architecture, modifying auth/forwarding behavior |
 | `plans/` | Working planning documents for executed features | Understanding implementation history, decision rationale for past changes |
 
 ## Build

@@ -282,6 +282,72 @@ http://localhost:3001/admin/
 
 `API_TRUSTED_PROXY_IPS`: Comma-separated list of trusted proxy IP addresses (empty default). Required when deploying behind reverse proxy (nginx, AWS ALB, Cloudflare). Leave empty for direct internet exposure. See api/README.md for configuration details.
 
+## Proxy Server (Optional)
+
+The bot includes an optional reverse proxy server for browser-based API access. When enabled, the proxy accepts HTTP Basic Auth credentials and forwards authenticated requests to the API server.
+
+**Architecture:**
+
+```
+Browser --[Basic Auth]--> Proxy Server (8080) --[Bearer Token]--> API Server (3001) --> ConfigManager
+```
+
+### Enabling the Proxy
+
+Set the following environment variables:
+
+```bash
+# Enable the proxy server
+PROXY_ENABLED=true
+
+# Proxy server port (default: 8080)
+PROXY_PORT=8080
+
+# API server URL to proxy to (default: http://localhost:3001)
+PROXY_API_URL=http://localhost:3001
+
+# HTTP Basic Auth credentials (required if PROXY_ENABLED=true)
+PROXY_USER=admin
+PROXY_PASSWORD=your-secure-password  # Must be 8+ characters
+```
+
+The proxy also requires a Bearer token for API authentication. It uses `PROXY_BEARER_TOKEN` if set, otherwise falls back to `API_BEARER_TOKEN`.
+
+### Usage
+
+With the proxy enabled, access the admin UI in your browser:
+
+```
+http://localhost:8080/admin/
+```
+
+Your browser will prompt for username/password via HTTP Basic Auth.
+
+### Proxy Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /health` | Health check (no auth required) |
+| `* /*` | All other requests proxied to API with Bearer token injection |
+
+### Proxy Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PROXY_ENABLED` | false | Enable the reverse proxy |
+| `PROXY_PORT` | 8080 | Port for proxy server |
+| `PROXY_API_URL` | http://localhost:3001 | API server URL to proxy to |
+| `PROXY_USER` | (required) | Basic Auth username |
+| `PROXY_PASSWORD` | (required) | Basic Auth password (8+ chars) |
+| `PROXY_BEARER_TOKEN` | API_BEARER_TOKEN | Bearer token for API auth |
+
+### Security Considerations
+
+- **Basic Auth vs Bearer Token**: The proxy uses HTTP Basic Auth which is browser-native but sends credentials with every request. Use HTTPS in production.
+- **Credential separation**: Proxy credentials are separate from API Bearer tokens, allowing different access control policies.
+- **Password requirements**: PROXY_PASSWORD must be at least 8 characters (OWASP minimum).
+- **Fail-fast validation**: The application refuses to start if PROXY_ENABLED=true but required credentials are missing or invalid.
+
 ### Response Format
 
 Success responses:

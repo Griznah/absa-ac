@@ -153,12 +153,15 @@ const App = {
     },
 
     // Escape HTML to prevent XSS
-    // Uses textContent assignment to avoid innerHTML injection (ref: RSK-001)
+    // Uses textContent/innerHTML round-trip for <, >, & escaping,
+    // plus manual quote escaping for attribute context safety
     // All user-provided content rendered through this method
     escapeHtml(text) {
         const div = document.createElement('div');
         div.textContent = text;
-        return div.innerHTML;
+        return div.innerHTML
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     },
 
     // Add new server
