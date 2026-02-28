@@ -24,3 +24,10 @@ HTTP API server for dynamic configuration management with middleware chain, auth
 | `middleware_integration_test.go` | Integration tests for middleware components | Testing middleware interaction, end-to-end middleware flows |
 | `benchmarks_test.go` | Performance benchmarks for config validation, deep merge, Bearer auth comparison | Measuring performance impact, optimizing operations |
 | `csrf_test.go` | Unit tests for CSRF protection and token generation | Validating CSRF implementation, testing token generation and validation |
+
+## Subdirectories
+
+| Directory | What | When to read |
+| --------- | ---- | ------------ |
+| `web/` | Web frontend container with admin UI | Understanding frontend asset organization |
+| `web/admin/` | Embedded admin frontend: login/config editor SPA with vanilla JS | Understanding admin UI, modifying frontend behavior, security design |
