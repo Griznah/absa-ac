@@ -3,7 +3,7 @@ package proxy
 import (
 	"crypto/subtle"
 	"encoding/base64"
-	"fmt"
+	"encoding/json"
 	"log"
 	"net/http"
 	"strings"
@@ -76,10 +76,13 @@ func BasicAuth(username, password string, logger *log.Logger) func(http.Handler)
 }
 
 // writeProxyError writes a JSON error response.
+// Uses json.Marshal to ensure proper escaping of special characters.
 func writeProxyError(w http.ResponseWriter, status int, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	fmt.Fprintf(w, `{"error":"%s"}`, message)
+	// Use json.Marshal for proper JSON escaping (quotes, backslashes, control chars)
+	data, _ := json.Marshal(map[string]string{"error": message})
+	w.Write(data)
 }
 
 // getClientIP extracts client IP from request.
