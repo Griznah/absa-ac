@@ -14,7 +14,7 @@ No framework or build tooling. Zero build dependencies appropriate for small CRU
 
 ### DL-003: sessionStorage for Token Storage
 
-Bearer token stored in `sessionStorage` (cleared on tab close). More secure than `localStorage` for XSS protection. Trade-off: no remember-me functionality.
+Bearer token stored in `sessionStorage` (cleared on tab close). Limits token exposure window compared to `localStorage` persistence. Note: both storage mechanisms are equally accessible to XSS attacks; the security benefit is reduced persistence only. Trade-off: no remember-me functionality.
 
 ### DL-004: CSRF Defense-in-Depth
 
@@ -70,7 +70,7 @@ index.html -> auth.js -> api.js -> app.js
 
 1. User enters bearer token on login screen
 2. Token format validated locally (32+ chars)
-3. Token verified against `/health` endpoint
+3. Token verified against `/api/config` endpoint (protected, requires valid auth)
 4. CSRF token fetched from `/api/csrf-token`
 5. Both tokens stored in `sessionStorage`
 6. Tokens auto-included in all API requests
