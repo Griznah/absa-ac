@@ -15,7 +15,7 @@ func TestConfigLoadFromEnv(t *testing.T) {
 			name:    "defaults when no env vars set",
 			envVars: map[string]string{},
 			expectedConfig: Config{
-				Port:        "3002",
+				Port:        "8080",
 				APIURL:      "http://localhost:3001",
 				Username:    "",
 				Password:    "",
@@ -59,7 +59,7 @@ func TestConfigLoadFromEnv(t *testing.T) {
 				"API_BEARER_TOKEN": "fallback-token",
 			},
 			expectedConfig: Config{
-				Port:        "3002",
+				Port:        "8080",
 				APIURL:      "http://localhost:3001",
 				Username:    "",
 				Password:    "",
@@ -73,7 +73,7 @@ func TestConfigLoadFromEnv(t *testing.T) {
 				"API_BEARER_TOKEN":   "api-token",
 			},
 			expectedConfig: Config{
-				Port:        "3002",
+				Port:        "8080",
 				APIURL:      "http://localhost:3001",
 				Username:    "",
 				Password:    "",

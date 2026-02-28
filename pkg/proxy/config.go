@@ -6,11 +6,11 @@ import (
 )
 
 // Config holds proxy server configuration loaded from environment variables.
-// DL-004: Proxy runs on configurable separate port (default 3002)
+// DL-004: Proxy runs on configurable separate port (default 8080)
 // DL-005: Single credential pair via environment variables
 // DL-006: Proxy forwards to configurable API URL
 type Config struct {
-	Port        string // Port to listen on (default: 3002)
+	Port        string // Port to listen on (default: 8080)
 	APIURL      string // URL of the upstream API (default: http://localhost:3001)
 	Username    string // Basic Auth username
 	Password    string // Basic Auth password
@@ -23,7 +23,7 @@ type Config struct {
 func LoadFromEnv() Config {
 	port := os.Getenv("PROXY_PORT")
 	if port == "" {
-		port = "3002"
+		port = "8080"
 	}
 
 	apiURL := os.Getenv("PROXY_API_URL")

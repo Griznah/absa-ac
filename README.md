@@ -289,7 +289,7 @@ The bot includes an optional reverse proxy server for browser-based API access. 
 **Architecture:**
 
 ```
-Browser --[Basic Auth]--> Proxy Server (3002) --[Bearer Token]--> API Server (3001) --> ConfigManager
+Browser --[Basic Auth]--> Proxy Server (8080) --[Bearer Token]--> API Server (3001) --> ConfigManager
 ```
 
 ### Enabling the Proxy
@@ -300,8 +300,8 @@ Set the following environment variables:
 # Enable the proxy server
 PROXY_ENABLED=true
 
-# Proxy server port (default: 3002)
-PROXY_PORT=3002
+# Proxy server port (default: 8080)
+PROXY_PORT=8080
 
 # API server URL to proxy to (default: http://localhost:3001)
 PROXY_API_URL=http://localhost:3001
@@ -318,7 +318,7 @@ The proxy also requires a Bearer token for API authentication. It uses `PROXY_BE
 With the proxy enabled, access the admin UI in your browser:
 
 ```
-http://localhost:3002/admin/
+http://localhost:8080/admin/
 ```
 
 Your browser will prompt for username/password via HTTP Basic Auth.
@@ -335,7 +335,7 @@ Your browser will prompt for username/password via HTTP Basic Auth.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PROXY_ENABLED` | false | Enable the reverse proxy |
-| `PROXY_PORT` | 3002 | Port for proxy server |
+| `PROXY_PORT` | 8080 | Port for proxy server |
 | `PROXY_API_URL` | http://localhost:3001 | API server URL to proxy to |
 | `PROXY_USER` | (required) | Basic Auth username |
 | `PROXY_PASSWORD` | (required) | Basic Auth password (8+ chars) |

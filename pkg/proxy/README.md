@@ -5,7 +5,7 @@ Reverse proxy that translates HTTP Basic Auth to Bearer token authentication for
 ## Architecture
 
 ```
-Browser --[Basic Auth]--> Proxy (3002) --[Bearer Token]--> API (3001) --> ConfigManager
+Browser --[Basic Auth]--> Proxy (8080) --[Bearer Token]--> API (3001) --> ConfigManager
 ```
 
 ## Why This Exists
@@ -25,7 +25,7 @@ The admin UI at `/admin/` requires Bearer token authentication, which browsers c
 | -------- | ------- | ---- |
 | Basic Auth vs Bearer | Browser-native login dialog | Credentials sent with every request |
 | Single credential pair | Simple configuration | No per-user audit trail |
-| Separate port (3002) | Clean separation from API | Additional port management |
+| Separate port (8080) | Clean separation from API | Additional port management |
 
 ## Security
 

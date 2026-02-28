@@ -32,9 +32,9 @@ USER 1001
 
 # Expose ports
 # 3001: Bot API server (optional, when API_ENABLED=true)
-# 3002: Proxy server (optional, when PROXY_ENABLED=true)
+# 8080: Proxy server (optional, when PROXY_ENABLED=true)
 EXPOSE 3001
-EXPOSE 3002
+EXPOSE 8080
 
 # Set environment variables (replace at runtime)
 ENV DISCORD_TOKEN=""

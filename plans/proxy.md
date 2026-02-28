@@ -4,7 +4,7 @@
 
 Admin UI requires manual Bearer token entry which is not browser-native. Users want simpler browser-based access using HTTP Basic Auth for automatic browser login dialogs.
 
-**Approach**: Create standalone reverse proxy package (pkg/proxy) that accepts HTTP Basic Auth, validates credentials, forwards requests to existing API with Bearer token injection. Proxy runs independently from main bot on separate port (default 3002).
+**Approach**: Create standalone reverse proxy package (pkg/proxy) that accepts HTTP Basic Auth, validates credentials, forwards requests to existing API with Bearer token injection. Proxy runs independently from main bot on separate port (default 8080).
 
 ### Proxy Architecture
 
@@ -21,7 +21,7 @@ Browser --[Basic Auth]--> Proxy Server --[Bearer Token]--> API Server --> Config
 | DL-001 | Create standalone proxy package (pkg/proxy) separate from api package | Proxy is optional/separate from main bot -> independent package allows separate binary deployment -> no modification to existing API auth (out of scope constraint) -> cleaner separation of concerns |
 | DL-002 | Use HTTP Basic Auth (RFC 7617) for browser-native authentication | Browser handles Basic Auth dialog natively -> no custom login form needed -> credentials in Authorization header per RFC -> simpler UX for web access |
 | DL-003 | Proxy injects Bearer token when forwarding to API | Existing API requires Bearer token (invariant) -> proxy validates Basic Auth credentials -> replaces Authorization header with Bearer token -> API unchanged |
-| DL-004 | Proxy runs on configurable separate port (default 3002) | API already on port 3001 -> separate port allows independent operation -> configurable via PROXY_PORT env var |
+| DL-004 | Proxy runs on configurable separate port (default 8080) | API already on port 3001 -> separate port allows independent operation -> configurable via PROXY_PORT env var |
 | DL-005 | Single credential pair via environment variables (PROXY_USER, PROXY_PASSWORD) | Single user or shared credentials acceptable (M priority assumption) -> environment variables match existing API_BEARER_TOKEN pattern -> simple configuration |
 | DL-006 | Proxy forwards to configurable API URL (default localhost:API_PORT) | Allows proxy to run on different host from API -> configurable via PROXY_API_URL env var -> supports containerized deployment |
 | DL-007 | Constant-time password comparison using crypto/subtle.ConstantTimeCompare | Prevents timing attacks on password -> matches existing BearerAuth pattern in api/middleware.go -> security consistency |
@@ -92,7 +92,7 @@ AC Discord Bot with REST API - Go-based Discord bot for monitoring Assetto Corsa
 
 #### Code Intent
 
-- **CI-M-001-001** `pkg/proxy/config.go`: Config struct with fields: Port (default 3002), APIURL (default localhost:3001), Username, Password, BearerToken. LoadFromEnv() reads PROXY_PORT, PROXY_API_URL, PROXY_USER, PROXY_PASSWORD, PROXY_BEARER_TOKEN (defaults to API_BEARER_TOKEN). Validate() ensures username and password are 8+ chars when PROXY_ENABLED=true; fatal error on validation failure. (refs: DL-004, DL-005, DL-006, DL-015, DL-016)
+- **CI-M-001-001** `pkg/proxy/config.go`: Config struct with fields: Port (default 8080), APIURL (default localhost:3001), Username, Password, BearerToken. LoadFromEnv() reads PROXY_PORT, PROXY_API_URL, PROXY_USER, PROXY_PASSWORD, PROXY_BEARER_TOKEN (defaults to API_BEARER_TOKEN). Validate() ensures username and password are 8+ chars when PROXY_ENABLED=true; fatal error on validation failure. (refs: DL-004, DL-005, DL-006, DL-015, DL-016)
 - **CI-M-001-002** `pkg/proxy/server.go`: Server struct with http.Server, config, logger, http.Client (reused for upstream requests). NewServer() constructor creates HTTP client with 30s timeout, MaxIdleConns=10, IdleConnTimeout=90s. Start(ctx) begins listening, supports graceful shutdown via context. Stop() method for clean termination. Health endpoint at /health returns 200 OK. (refs: DL-001, DL-008, DL-011)
 
 #### Code Changes
@@ -111,11 +111,11 @@ AC Discord Bot with REST API - Go-based Discord bot for monitoring Assetto Corsa
 +)
 +
 +// Config holds proxy server configuration loaded from environment variables.
-+// DL-004: Proxy runs on configurable separate port (default 3002)
++// DL-004: Proxy runs on configurable separate port (default 8080)
 +// DL-005: Single credential pair via environment variables
 +// DL-006: Proxy forwards to configurable API URL
 +type Config struct {
-+	Port         string // Port to listen on (default: 3002)
++	Port         string // Port to listen on (default: 8080)
 +	APIURL       string // URL of the upstream API (default: http://localhost:3001)
 +	Username     string // Basic Auth username
 +	Password     string // Basic Auth password
@@ -128,7 +128,7 @@ AC Discord Bot with REST API - Go-based Discord bot for monitoring Assetto Corsa
 +func LoadFromEnv() Config {
 +	port := os.Getenv("PROXY_PORT")
 +	if port == "" {
-+		port = "3002"
++		port = "8080"
 +	}
 +
 +	apiURL := os.Getenv("PROXY_API_URL")
@@ -645,8 +645,8 @@ AC Discord Bot with REST API - Go-based Discord bot for monitoring Assetto Corsa
 
 - **CI-M-004-001** `main.go`: Add proxy initialization: read PROXY_ENABLED env var, create proxy.Server if enabled, start in goroutine alongside API server. Add proxy to graceful shutdown sequence. Wire PROXY_BEARER_TOKEN from API_BEARER_TOKEN. Fatal error if PROXY_ENABLED=true but credentials missing/invalid. (refs: DL-009, DL-015)
 - **CI-M-004-002** `README.md`: Add Proxy section: describe purpose (browser-native auth), configuration env vars (PROXY_ENABLED, PROXY_PORT, PROXY_API_URL, PROXY_USER, PROXY_PASSWORD), usage examples, security considerations (Basic Auth vs Bearer tradeoffs). (refs: DL-002, DL-006)
-- **CI-M-004-003** `.env.example`: Add proxy configuration examples: PROXY_ENABLED=true, PROXY_PORT=3002, PROXY_API_URL=http://localhost:3001, PROXY_USER=admin, PROXY_PASSWORD=your-secure-password (refs: DL-004, DL-005, DL-006)
-- **CI-M-004-004** `Containerfile`: Add EXPOSE 3002 for proxy port. Document proxy port in comments. (refs: DL-004)
+- **CI-M-004-003** `.env.example`: Add proxy configuration examples: PROXY_ENABLED=true, PROXY_PORT=8080, PROXY_API_URL=http://localhost:3001, PROXY_USER=admin, PROXY_PASSWORD=your-secure-password (refs: DL-004, DL-005, DL-006)
+- **CI-M-004-004** `Containerfile`: Add EXPOSE 8080 for proxy port. Document proxy port in comments. (refs: DL-004)
 
 #### Code Changes
 
@@ -662,7 +662,7 @@ AC Discord Bot with REST API - Go-based Discord bot for monitoring Assetto Corsa
 +
 +# Proxy configuration (optional)
 +# PROXY_ENABLED=true
-+# PROXY_PORT=3002
++# PROXY_PORT=8080
 +# PROXY_API_URL=http://localhost:3001
 +# PROXY_USER=admin
 +# PROXY_PASSWORD=your-secure-password
@@ -677,7 +677,7 @@ AC Discord Bot with REST API - Go-based Discord bot for monitoring Assetto Corsa
  # Expose ports
  # 3001: Bot API server (optional, when API_ENABLED=true)
  EXPOSE 3001
-+EXPOSE 3002
++EXPOSE 8080
 
  # Set environment variables (replace at runtime)
  ENV DISCORD_TOKEN=""
@@ -717,8 +717,8 @@ AC Discord Bot with REST API - Go-based Discord bot for monitoring Assetto Corsa
 +# Enable the proxy server
 +PROXY_ENABLED=true
 +
-+# Proxy server port (default: 3002)
-+PROXY_PORT=3002
++# Proxy server port (default: 8080)
++PROXY_PORT=8080
 +
 +# HTTP Basic Auth credentials (required if PROXY_ENABLED=true)
 +PROXY_USER=admin
@@ -730,7 +730,7 @@ AC Discord Bot with REST API - Go-based Discord bot for monitoring Assetto Corsa
 +With the proxy enabled, access the admin UI in your browser:
 +
 +```
-+http://localhost:3002/admin/
++http://localhost:8080/admin/
 +```
 +
 +Your browser will prompt for username/password via HTTP Basic Auth.
@@ -741,7 +741,7 @@ AC Discord Bot with REST API - Go-based Discord bot for monitoring Assetto Corsa
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PROXY_ENABLED` | false | Enable the reverse proxy |
-| `PROXY_PORT` | 3002 | Port for proxy server |
+| `PROXY_PORT` | 8080 | Port for proxy server |
 | `PROXY_API_URL` | http://localhost:3001 | API server URL to proxy to |
 | `PROXY_USER` | (required) | Basic Auth username |
 | `PROXY_PASSWORD` | (required) | Basic Auth password (8+ chars) |
@@ -758,4 +758,4 @@ AC Discord Bot with REST API - Go-based Discord bot for monitoring Assetto Corsa
 | `main.go` | Modify | Add optional proxy startup |
 | `README.md` | Modify | Add proxy documentation section |
 | `.env.example` | Modify | Add proxy env var examples |
-| `Containerfile` | Modify | Add EXPOSE 3002 |
+| `Containerfile` | Modify | Add EXPOSE 8080 |
