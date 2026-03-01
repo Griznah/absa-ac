@@ -53,7 +53,12 @@ const App = {
         // Check if behind proxy (proxy handles authentication)
         const proxyMode = await window.Auth.checkProxyMode();
         if (proxyMode) {
-            // Proxy mode: auto-authenticate
+            // Proxy mode: fetch CSRF token then show config
+            const csrfSuccess = await window.Auth.fetchCSRFToken();
+            if (!csrfSuccess) {
+                this.showMessage('Failed to fetch CSRF token', 'error');
+                return;
+            }
             await this.showConfigScreen();
             return;
         }
@@ -300,8 +305,10 @@ const App = {
     async validateConfig() {
         this.collectFormChanges();
         const response = await window.APIClient.post('/config/validate', this.buildConfigPayload());
-        if (response.ok) {
-            this.showMessage('Configuration is valid', 'success');
+        // 501 = JSON syntax valid, full validation requires PUT
+        // 400 = JSON syntax error
+        if (response.ok || response.status === 501) {
+            this.showMessage('JSON syntax is valid', 'success');
         } else {
             this.showMessage('Validation failed: ' + response.error, 'error');
         }

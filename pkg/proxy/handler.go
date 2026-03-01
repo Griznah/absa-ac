@@ -53,6 +53,10 @@ func ProxyHandler(apiURL, bearerToken string, client *http.Client, logger *log.L
 				if key == "Authorization" {
 					continue
 				}
+				// Strip Origin header - proxy-to-API is same-origin, avoid CORS issues
+				if key == "Origin" {
+					continue
+				}
 				// Skip hop-by-hop headers
 				skipHeader := false
 				for _, hopHeader := range hopByHopHeaders {
