@@ -32,6 +32,11 @@ const App = {
             this.addServer();
         });
 
+        // Add emoji button
+        document.getElementById('add-emoji-btn').addEventListener('click', () => {
+            this.addEmojiRow();
+        });
+
         // Validate button
         document.getElementById('validate-btn').addEventListener('click', () => {
             this.validateConfig();
@@ -102,6 +107,8 @@ const App = {
     },
 
     // Render config to UI
+    // Populates server list and settings fields: server_ip, update_interval,
+    // category_order, category_emojis (ref: DL-002).
     renderConfig() {
         // Render servers list
         const serversList = document.getElementById('servers-list');
@@ -117,36 +124,133 @@ const App = {
         });
 
         // Render settings
-        document.getElementById('interval-input').value = this.config.interval || 60;
-        document.getElementById('category-input').value = this.config.category_id || '';
+        document.getElementById('server-ip-input').value = this.config.server_ip || '';
+        document.getElementById('update-interval-input').value = this.config.update_interval || 30;
+        document.getElementById('category-order-input').value = (this.config.category_order || []).join(', ');
+        this.renderCategoryEmojis();
+    },
+
+    // Populate category dropdown with options from category_order
+    populateCategoryDropdown(select, selectedCategory) {
+        select.innerHTML = '';
+        const categories = this.config.category_order || [];
+        categories.forEach(cat => {
+            const option = document.createElement('option');
+            option.value = cat;
+            option.textContent = cat;
+            if (cat === selectedCategory) {
+                option.selected = true;
+            }
+            select.appendChild(option);
+        });
+    },
+
+    // Render category emojis editor
+    renderCategoryEmojis() {
+        const container = document.getElementById('category-emojis-list');
+        container.innerHTML = '';
+        const emojis = this.config.category_emojis || {};
+        Object.entries(emojis).forEach(([category, emoji]) => {
+            this.addEmojiRow(category, emoji);
+        });
+    },
+
+    // Add a row to the emoji editor
+    addEmojiRow(category = '', emoji = '') {
+        const container = document.getElementById('category-emojis-list');
+        const row = document.createElement('div');
+        row.className = 'emoji-row';
+
+        const catInput = document.createElement('input');
+        catInput.type = 'text';
+        catInput.className = 'emoji-category-input';
+        catInput.placeholder = 'Category';
+        catInput.value = category;
+
+        const emojiInput = document.createElement('input');
+        emojiInput.type = 'text';
+        emojiInput.className = 'emoji-value-input';
+        emojiInput.placeholder = 'Emoji';
+        emojiInput.value = emoji;
+
+        const deleteBtn = document.createElement('button');
+        deleteBtn.type = 'button';
+        deleteBtn.className = 'delete-emoji-btn';
+        deleteBtn.textContent = 'X';
+        deleteBtn.addEventListener('click', () => row.remove());
+
+        row.appendChild(catInput);
+        row.appendChild(emojiInput);
+        row.appendChild(deleteBtn);
+        container.appendChild(row);
     },
 
     // Create server editor element
+    // Uses DOM APIs instead of innerHTML for XSS prevention (ref: DL-004).
+    // Fields: name (text), port (number 1-65535), category (dropdown).
+    // Category dropdown populated from category_order to ensure valid values (ref: DL-003).
     createServerElement(server, index) {
         const div = document.createElement('div');
         div.className = 'server-item';
-        div.innerHTML = `
-            <div class="form-group">
-                <label>Name</label>
-                <input type="text" data-field="name" value="${this.escapeHtml(server.name || '')}">
-            </div>
-            <div class="form-group">
-                <label>URL</label>
-                <input type="text" data-field="url" value="${this.escapeHtml(server.url || '')}">
-            </div>
-            <button type="button" class="delete-server-btn" data-index="${index}">Delete</button>
-        `;
+
+        const nameGroup = document.createElement('div');
+        nameGroup.className = 'form-group';
+        const nameLabel = document.createElement('label');
+        nameLabel.textContent = 'Name';
+        const nameInput = document.createElement('input');
+        nameInput.type = 'text';
+        nameInput.dataset.field = 'name';
+        nameInput.value = server.name || '';
+        nameGroup.appendChild(nameLabel);
+        nameGroup.appendChild(nameInput);
+
+        const portGroup = document.createElement('div');
+        portGroup.className = 'form-group';
+        const portLabel = document.createElement('label');
+        portLabel.textContent = 'Port';
+        const portInput = document.createElement('input');
+        portInput.type = 'number';
+        portInput.min = '1';
+        portInput.max = '65535';
+        portInput.dataset.field = 'port';
+        portInput.value = server.port || '';
+        portGroup.appendChild(portLabel);
+        portGroup.appendChild(portInput);
+
+        const categoryGroup = document.createElement('div');
+        categoryGroup.className = 'form-group';
+        const categoryLabel = document.createElement('label');
+        categoryLabel.textContent = 'Category';
+        const categorySelect = document.createElement('select');
+        categorySelect.dataset.field = 'category';
+        this.populateCategoryDropdown(categorySelect, server.category);
+        categoryGroup.appendChild(categoryLabel);
+        categoryGroup.appendChild(categorySelect);
+
+        const deleteBtn = document.createElement('button');
+        deleteBtn.type = 'button';
+        deleteBtn.className = 'delete-server-btn';
+        deleteBtn.textContent = 'Delete';
+
+        div.appendChild(nameGroup);
+        div.appendChild(portGroup);
+        div.appendChild(categoryGroup);
+        div.appendChild(deleteBtn);
 
         // Bind delete handler
-        div.querySelector('.delete-server-btn').addEventListener('click', () => {
+        deleteBtn.addEventListener('click', () => {
             this.deleteServer(index);
         });
 
         // Bind input handlers
-        div.querySelectorAll('input').forEach(input => {
-            input.addEventListener('change', (e) => {
-                this.updateServer(index, e.target.dataset.field, e.target.value);
-            });
+        nameInput.addEventListener('change', (e) => {
+            this.updateServer(index, 'name', e.target.value);
+        });
+        portInput.addEventListener('change', (e) => {
+            this.updateServer(index, 'port', parseInt(e.target.value, 10) || 0);
+        });
+        categorySelect.addEventListener('change', (e) => {
+            this.updateServer(index, 'category', e.target.value);
         });
 
         return div;
@@ -165,8 +269,9 @@ const App = {
     },
 
     // Add new server
+    // Creates server with default values matching Server struct (ref: DL-001).
     addServer() {
-        this.servers.push({ name: '', url: '' });
+        this.servers.push({ name: '', port: 0, category: '' });
         this.renderConfig();
     },
 
@@ -207,17 +312,42 @@ const App = {
     },
 
     // Collect form changes into config object
+    // Gathers all config fields: server_ip, update_interval, category_order,
+    // category_emojis, and servers array (ref: DL-002).
     collectFormChanges() {
-        this.config.interval = parseInt(document.getElementById('interval-input').value, 10) || 60;
-        this.config.category_id = document.getElementById('category-input').value.trim();
+        this.config.server_ip = document.getElementById('server-ip-input').value.trim();
+        this.config.update_interval = parseInt(document.getElementById('update-interval-input').value, 10) || 30;
+
+        const orderValue = document.getElementById('category-order-input').value.trim();
+        this.config.category_order = orderValue
+            ? orderValue.split(',').map(s => s.trim()).filter(s => s)
+            : [];
+
+        this.config.category_emojis = this.collectCategoryEmojis();
         this.config.servers = this.servers;
+    },
+
+    // Collect category emojis from the editor
+    collectCategoryEmojis() {
+        const emojis = {};
+        const rows = document.querySelectorAll('#category-emojis-list .emoji-row');
+        rows.forEach(row => {
+            const cat = row.querySelector('.emoji-category-input').value.trim();
+            const emoji = row.querySelector('.emoji-value-input').value.trim();
+            if (cat && emoji) {
+                emojis[cat] = emoji;
+            }
+        });
+        return emojis;
     },
 
     // Build config payload for API
     buildConfigPayload() {
         return {
-            interval: this.config.interval,
-            category_id: this.config.category_id,
+            server_ip: this.config.server_ip,
+            update_interval: this.config.update_interval,
+            category_order: this.config.category_order,
+            category_emojis: this.config.category_emojis,
             servers: this.servers
         };
     },
