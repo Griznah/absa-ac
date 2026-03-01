@@ -38,6 +38,10 @@ const APIClient = {
     async parseError(response) {
         try {
             const data = await response.json();
+            // Include details if available (e.g., validation errors)
+            if (data.details) {
+                return `${data.error}: ${data.details}`;
+            }
             return data.error || data.message || `HTTP ${response.status}`;
         } catch {
             return `HTTP ${response.status}: ${response.statusText}`;
