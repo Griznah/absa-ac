@@ -35,8 +35,14 @@ Admin UI served at `/admin/*`, separate from public `/health` endpoint. Clear UR
 ### XSS Prevention
 
 - All user input escaped via `textContent` (never `innerHTML` for user content)
-- `escapeHtml()` function sanitizes server names/URLs before rendering
+- `escapeHtml()` function sanitizes server names before rendering
 - Strict CSP header (see below)
+
+Server editor extended to edit all Server struct fields (name, port, category)
+rather than just name and non-existent url field (ref: DL-001).
+Category uses dropdown populated from category_order to ensure validity (ref: DL-003).
+Global config fields (server_ip, update_interval, category_order, category_emojis)
+added to enable full config editing via admin UI (ref: DL-002).
 
 ### CSRF Protection
 
