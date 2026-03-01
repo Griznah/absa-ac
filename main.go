@@ -170,10 +170,10 @@ var (
 )
 
 type Server struct {
-	Name     string
-	IP       string
-	Port     int
-	Category string
+	Name     string `json:"name"`
+	IP       string `json:"ip"`
+	Port     int    `json:"port"`
+	Category string `json:"category"`
 }
 
 // ConfigManager provides thread-safe access to configuration with dynamic reload
