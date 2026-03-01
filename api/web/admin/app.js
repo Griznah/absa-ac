@@ -49,7 +49,15 @@ const App = {
     },
 
     // Check auth state and show appropriate screen
-    checkAuth() {
+    async checkAuth() {
+        // Check if behind proxy (proxy handles authentication)
+        const proxyMode = await window.Auth.checkProxyMode();
+        if (proxyMode) {
+            // Proxy mode: auto-authenticate
+            await this.showConfigScreen();
+            return;
+        }
+
         if (window.Auth.isAuthenticated()) {
             this.showConfigScreen();
         } else {

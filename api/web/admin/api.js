@@ -17,7 +17,9 @@ const APIClient = {
         };
 
         const bearerToken = window.Auth?.getToken();
-        if (bearerToken) {
+        // In proxy mode, token is 'proxy' - don't send Bearer header
+        // Proxy injects the token when forwarding
+        if (bearerToken && bearerToken !== 'proxy') {
             headers['Authorization'] = `Bearer ${bearerToken}`;
         }
 
