@@ -13,10 +13,13 @@ Discord bot for monitoring Assetto Corsa racing servers with dynamic configurati
 | `Containerfile` | Container image definition with Go static binary | Building containers, deployment, understanding runtime |
 | `PODMAN.md` | Podman-specific deployment instructions and examples | Deploying with Podman, understanding container setup |
 | `go.mod` | Go module dependencies and version pinning | Updating dependencies, checking versions |
+| `go.sum` | Go module checksums for dependency verification | Verifying dependency integrity, reproducing builds |
 | `.gitignore` | Git ignore patterns (binaries, config files, IDE files) | Understanding what's excluded from version control |
 | `.env.example` | Template for environment variables (DISCORD_TOKEN, CHANNEL_ID, API settings) | Setting up local development, configuring deployment |
 | `SECURITY.md` | Security guide: incident response, credential rotation, pre-release checklist | Understanding security procedures, responding to incidents |
 | `CODEBASE_ANALYSIS.md` | Detailed codebase analysis and architecture documentation | Understanding project structure, security considerations |
+| `CONTRIBUTING.md` | Contribution guidelines and development standards | Understanding how to contribute, coding standards |
+| `LICENSE` | MIT license terms | Understanding usage rights, licensing requirements |
 | `test_cleanup.sh` | Script for cleaning up test resources | Running test cleanup, managing test artifacts |
 | `test_api_token_fails.sh` | Startup security integration test for API_BEARER_TOKEN validation | Verifying fail-fast token validation, testing security requirements |
 | `test_cors_fails.sh` | Startup security integration test for CORS wildcard validation | Verifying CORS fail-fast behavior, testing production safety checks |
@@ -92,12 +95,8 @@ gofmt -w .                               # Format code
 
 ## REST API Development
 
-**Architecture:**
-- Hybrid application: Discord bot + optional REST API server
-- API enabled via `API_ENABLED=true` environment variable
-- Full documentation in `api/CLAUDE.md` and `api/README.md`
+See `api/CLAUDE.md` for API package documentation and `api/README.md` for architecture details.
 
-**API testing:**
 ```bash
 # Run API-specific tests
 go test -v ./api/...
@@ -112,19 +111,3 @@ go test -v ./api/ -run TestE2E
 # Run benchmarks
 go test -v ./api/ -bench=. -benchmem
 ```
-
-**API package structure:**
-- `api/server.go` - HTTP server lifecycle, graceful shutdown
-- `api/handlers.go` - Config endpoint handlers (GET, PATCH, PUT, validate)
-- `api/middleware.go` - Auth (Bearer token), rate limiting, CORS, security headers
-- `api/routes.go` - Route registration
-- `api/response.go` - Common response types
-
-**Security features:**
-- Constant-time Bearer token comparison (timing attack prevention)
-- IP spoofing protection for rate limiting
-- Configurable trusted proxy IPs
-- Incremental rate limiter cleanup
-- CORS and security headers
-
-See `api/CLAUDE.md` for complete API package documentation.
