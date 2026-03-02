@@ -2,8 +2,10 @@ package api
 
 import (
 	"encoding/json"
+	"io"
 	"log"
 	"net/http"
+	"strings"
 )
 
 // HealthCheck returns 200 OK if the API server is running
@@ -181,4 +183,89 @@ func (s *Server) ValidateConfig(w http.ResponseWriter, r *http.Request) {
 		"message":   "JSON syntax is valid, but full schema validation is not available through this endpoint",
 		"note":      "Apply the config via PUT /api/config to trigger full validation",
 	})
+}
+
+// DownloadConfig returns the configuration as a downloadable JSON file
+// Requires Bearer token authentication
+func (s *Server) DownloadConfig(w http.ResponseWriter, r *http.Request) {
+	if err := r.Context().Err(); err != nil {
+		log.Printf("DownloadConfig cancelled: %v", err)
+		WriteError(w, http.StatusServiceUnavailable, "Service unavailable", "Request cancelled")
+		return
+	}
+
+	cfg := s.cm.GetConfigAny()
+
+	// Set headers for file download
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", "attachment; filename=\"config.json\"")
+
+	// Encode config as JSON
+	if err := json.NewEncoder(w).Encode(cfg); err != nil {
+		log.Printf("DownloadConfig encode error: %v", err)
+		WriteError(w, http.StatusInternalServerError, "Failed to encode config", err.Error())
+		return
+	}
+}
+
+// UploadConfig accepts a config file upload and applies it
+// Requires Bearer token authentication and CSRF token
+func (s *Server) UploadConfig(w http.ResponseWriter, r *http.Request) {
+	if err := r.Context().Err(); err != nil {
+		log.Printf("UploadConfig cancelled: %v", err)
+		WriteError(w, http.StatusServiceUnavailable, "Service unavailable", "Request cancelled")
+		return
+	}
+
+	// Limit upload size to 1MB
+	const maxUploadSize = 1 << 20 // 1MB
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
+
+	// Parse multipart form
+	if err := r.ParseMultipartForm(maxUploadSize); err != nil {
+		if err.Error() == "http: request body too large" {
+			WriteError(w, http.StatusRequestEntityTooLarge, "File too large", "Maximum size is 1MB")
+			return
+		}
+		WriteError(w, http.StatusBadRequest, "Failed to parse form", err.Error())
+		return
+	}
+
+	// Get file from form field "config"
+	file, header, err := r.FormFile("config")
+	if err != nil {
+		WriteError(w, http.StatusBadRequest, "Missing file", "No file found in 'config' field")
+		return
+	}
+	defer file.Close()
+
+	// Validate file extension
+	if !strings.HasSuffix(strings.ToLower(header.Filename), ".json") {
+		WriteError(w, http.StatusBadRequest, "Invalid file type", "Only .json files are accepted")
+		return
+	}
+
+	// Read file content
+	data, err := io.ReadAll(file)
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, "Failed to read file", err.Error())
+		return
+	}
+
+	// Validate JSON syntax
+	var newConfig map[string]interface{}
+	if err := json.Unmarshal(data, &newConfig); err != nil {
+		WriteError(w, http.StatusBadRequest, "Invalid JSON", err.Error())
+		return
+	}
+
+	// Write config (triggers backup rotation via WriteConfigAny)
+	if err := s.cm.WriteConfigAny(newConfig); err != nil {
+		WriteError(w, http.StatusBadRequest, "Config write failed", err.Error())
+		return
+	}
+
+	// Return updated config
+	cfg := s.cm.GetConfigAny()
+	WriteJSON(w, http.StatusOK, cfg)
 }

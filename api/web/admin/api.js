@@ -98,7 +98,83 @@ const APIClient = {
     post(path, body) { return this.request('POST', path, body); },
     patch(path, body) { return this.request('PATCH', path, body); },
     put(path, body) { return this.request('PUT', path, body); },
-    delete(path) { return this.request('DELETE', path); }
+    delete(path) { return this.request('DELETE', path); },
+
+    // Download config as file
+    async downloadConfig() {
+        const headers = this.buildHeaders(false);
+
+        let response;
+        try {
+            response = await fetch(`${this.baseURL}/config/download`, { headers });
+        } catch (networkError) {
+            return { ok: false, status: 0, error: 'Network error: unable to reach server' };
+        }
+
+        if (!response.ok) {
+            return { ok: false, status: response.status, error: await this.parseError(response) };
+        }
+
+        // Get filename from Content-Disposition header
+        const disposition = response.headers.get('Content-Disposition');
+        let filename = 'config.json';
+        if (disposition) {
+            const match = disposition.match(/filename="(.+)"/);
+            if (match) filename = match[1];
+        }
+
+        // Trigger browser download
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+
+        return { ok: true, status: response.status };
+    },
+
+    // Upload config file
+    async uploadConfig(file) {
+        const formData = new FormData();
+        formData.append('config', file);
+
+        const headers = {};
+        const bearerToken = window.Auth?.getToken();
+        if (bearerToken && bearerToken !== 'proxy') {
+            headers['Authorization'] = `Bearer ${bearerToken}`;
+        }
+        const csrfToken = window.Auth?.getCSRFToken();
+        if (csrfToken) {
+            headers['X-CSRF-Token'] = csrfToken;
+        }
+
+        let response;
+        try {
+            response = await fetch(`${this.baseURL}/config/upload`, {
+                method: 'POST',
+                headers,
+                body: formData
+            });
+        } catch (networkError) {
+            return { ok: false, status: 0, error: 'Network error: unable to reach server' };
+        }
+
+        if (response.status === 401) {
+            window.Auth?.logout();
+            return { ok: false, status: 401, error: 'Authentication required' };
+        }
+
+        if (response.ok) {
+            const data = await response.json();
+            return { ok: true, status: response.status, data };
+        }
+
+        return { ok: false, status: response.status, error: await this.parseError(response) };
+    }
 };
 
 window.APIClient = APIClient;

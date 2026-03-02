@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -436,4 +438,67 @@ func TestE2E_GetServers(t *testing.T) {
 	if len(servers) != 5 {
 		t.Errorf("Expected 5 servers, got %d", len(servers))
 	}
+}
+
+// TestE2EConfigDownloadUpload tests the download-upload roundtrip
+func TestE2EConfigDownloadUpload(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping E2E test in short mode")
+	}
+
+	initialConfig := generateConfig(2)
+	client, baseURL, cleanup := setupTestEnvironment(t, initialConfig)
+	defer cleanup()
+
+	// Fetch CSRF token for state-changing requests
+	csrfToken := fetchCSRFToken(t, client, baseURL)
+
+	t.Run("download-upload roundtrip", func(t *testing.T) {
+		// Download config
+		downloadReq, err := http.NewRequest("GET", baseURL+"/api/config/download", nil)
+		if err != nil {
+			t.Fatalf("download request failed: %v", err)
+		}
+		downloadReq.Header.Set("Authorization", "Bearer e2e-test-token")
+
+		downloadResp, err := client.Do(downloadReq)
+		if err != nil {
+			t.Fatalf("download failed: %v", err)
+		}
+		defer downloadResp.Body.Close()
+
+		if downloadResp.StatusCode != http.StatusOK {
+			t.Fatalf("download returned %d, expected 200", downloadResp.StatusCode)
+		}
+
+		downloadedData, _ := io.ReadAll(downloadResp.Body)
+
+		// Verify Content-Disposition header
+		disposition := downloadResp.Header.Get("Content-Disposition")
+		if !strings.Contains(disposition, "attachment") {
+			t.Error("expected Content-Disposition attachment header")
+		}
+
+		// Upload same config
+		uploadBody := &bytes.Buffer{}
+		writer := multipart.NewWriter(uploadBody)
+		part, _ := writer.CreateFormFile("config", "config.json")
+		part.Write(downloadedData)
+		writer.Close()
+
+		uploadReq, _ := http.NewRequest("POST", baseURL+"/api/config/upload", uploadBody)
+		uploadReq.Header.Set("Content-Type", writer.FormDataContentType())
+		uploadReq.Header.Set("Authorization", "Bearer e2e-test-token")
+		uploadReq.Header.Set("X-CSRF-Token", csrfToken)
+
+		uploadResp, err := client.Do(uploadReq)
+		if err != nil {
+			t.Fatalf("upload failed: %v", err)
+		}
+		defer uploadResp.Body.Close()
+
+		if uploadResp.StatusCode != http.StatusOK {
+			t.Errorf("upload returned %d, expected 200", uploadResp.StatusCode)
+		}
+	})
 }

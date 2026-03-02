@@ -24,6 +24,22 @@ CSRF middleware wired into API chain: SecurityHeaders -> CORS -> Logger -> RateL
 
 Admin UI served at `/admin/*`, separate from public `/health` endpoint. Clear URL structure.
 
+### DL-006: Dedicated Download/Upload Endpoints
+
+Separate endpoints (`GET /api/config/download`, `POST /api/config/upload`) instead of reusing existing GET/PUT. Download sets `Content-Disposition: attachment` to trigger browser save-as dialog. Upload accepts `multipart/form-data` with JSON validation before writing. Clear separation between in-browser editing and file-based operations.
+
+### DL-007: 1MB Upload Limit
+
+Upload enforced at handler level via `ParseMultipartForm(1<<20)`. Config files typically < 100KB; 1MB prevents memory exhaustion while allowing reasonable headroom. Consistent with PUT `/api/config` body limit.
+
+### DL-008: Hidden File Input Pattern
+
+Upload uses hidden `<input type="file">` triggered by button click. Standard pattern for file uploads; provides consistent UI with existing action buttons despite browser styling limitations on file inputs.
+
+### DL-009: JSON Validation Before Write
+
+Upload validates JSON syntax before calling `WriteConfigAny`. Invalid JSON would corrupt config; fail-fast prevents broken state. Backend also validates `.json` extension for defense in depth (frontend `accept=.json` provides UX hint only).
+
 ## Security Design
 
 ### Token Storage

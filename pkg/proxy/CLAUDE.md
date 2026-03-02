@@ -2,10 +2,11 @@
 
 Reverse proxy server for browser-based API access via HTTP Basic Auth.
 
-## Index
+## Files
 
-| File | Contents | Read When |
-| ---- | -------- | --------- |
+| File | What | When to read |
+| ---- | ---- | ------------ |
+| `README.md` | Architecture, invariants, tradeoffs, middleware chain | Understanding why proxy exists, security design, deployment decisions |
 | `config.go` | Config struct, environment loading, validation | Understanding proxy configuration, adding new env vars |
 | `server.go` | HTTP server lifecycle, graceful shutdown, health endpoint | Modifying server behavior, debugging startup/shutdown |
 | `auth.go` | BasicAuth middleware, constant-time comparison, client IP extraction | Debugging auth failures, modifying authentication logic |
