@@ -19,4 +19,6 @@ func RegisterRoutes(mux *http.ServeMux, s *Server) {
 	mux.HandleFunc("PATCH /api/config", s.PatchConfig)
 	mux.HandleFunc("PUT /api/config", s.PutConfig)
 	mux.HandleFunc("POST /api/config/validate", s.ValidateConfig)
+	mux.HandleFunc("GET /api/config/download", s.DownloadConfig)
+	mux.HandleFunc("POST /api/config/upload", s.UploadConfig)
 }

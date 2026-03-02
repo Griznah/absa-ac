@@ -46,6 +46,21 @@ const App = {
         document.getElementById('save-btn').addEventListener('click', () => {
             this.saveConfig();
         });
+
+        // Download button
+        document.getElementById('download-btn').addEventListener('click', () => {
+            this.handleDownload();
+        });
+
+        // Upload button
+        document.getElementById('upload-btn').addEventListener('click', () => {
+            document.getElementById('file-input').click();
+        });
+
+        // File input change
+        document.getElementById('file-input').addEventListener('change', (e) => {
+            this.handleFileSelect(e);
+        });
     },
 
     // Check auth state and show appropriate screen
@@ -324,6 +339,39 @@ const App = {
         } else {
             this.showMessage('Failed to save: ' + response.error, 'error');
         }
+    },
+
+    // Handle download button click
+    async handleDownload() {
+        const response = await window.APIClient.downloadConfig();
+        if (response.ok) {
+            this.showMessage('Config downloaded', 'success');
+        } else {
+            this.showMessage('Download failed: ' + response.error, 'error');
+        }
+    },
+
+    // Handle file selection for upload
+    async handleFileSelect(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        // Validate file extension
+        if (!file.name.endsWith('.json')) {
+            this.showMessage('Please select a .json file', 'error');
+            e.target.value = ''; // Reset file input
+            return;
+        }
+
+        const response = await window.APIClient.uploadConfig(file);
+        if (response.ok) {
+            this.showMessage('Config uploaded successfully', 'success');
+            await this.loadConfig(); // Refresh from server
+        } else {
+            this.showMessage('Upload failed: ' + response.error, 'error');
+        }
+
+        e.target.value = ''; // Reset file input
     },
 
     // Collect form changes into config object

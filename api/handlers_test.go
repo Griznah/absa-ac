@@ -1,8 +1,10 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"log"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -304,4 +306,110 @@ func TestHandlers_GetServers(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDownloadConfig(t *testing.T) {
+	cm := &mockConfigManagerWithWrites{config: map[string]interface{}{"servers": []interface{}{}}}
+	s := NewServer(cm, "3001", "test-token", nil, nil, log.New(os.Stdout, "TEST: ", log.LstdFlags))
+
+	req := httptest.NewRequest("GET", "/api/config/download", nil)
+	rec := httptest.NewRecorder()
+
+	s.DownloadConfig(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rec.Code)
+	}
+
+	if !strings.Contains(rec.Header().Get("Content-Disposition"), "attachment") {
+		t.Error("expected Content-Disposition attachment header")
+	}
+
+	if !strings.Contains(rec.Header().Get("Content-Disposition"), "config.json") {
+		t.Error("expected filename in Content-Disposition header")
+	}
+}
+
+func TestUploadConfig(t *testing.T) {
+	t.Run("valid JSON", func(t *testing.T) {
+		cm := &mockConfigManagerWithWrites{config: map[string]interface{}{}}
+		s := NewServer(cm, "3001", "test-token", nil, nil, log.New(os.Stdout, "TEST: ", log.LstdFlags))
+
+		body := &bytes.Buffer{}
+		writer := multipart.NewWriter(body)
+		part, _ := writer.CreateFormFile("config", "test.json")
+		part.Write([]byte(`{"servers": []}`))
+		writer.Close()
+
+		req := httptest.NewRequest("POST", "/api/config/upload", body)
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+		rec := httptest.NewRecorder()
+
+		s.UploadConfig(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("invalid JSON", func(t *testing.T) {
+		cm := &mockConfigManagerWithWrites{config: map[string]interface{}{}}
+		s := NewServer(cm, "3001", "test-token", nil, nil, log.New(os.Stdout, "TEST: ", log.LstdFlags))
+
+		body := &bytes.Buffer{}
+		writer := multipart.NewWriter(body)
+		part, _ := writer.CreateFormFile("config", "test.json")
+		part.Write([]byte(`{invalid json}`))
+		writer.Close()
+
+		req := httptest.NewRequest("POST", "/api/config/upload", body)
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+		rec := httptest.NewRecorder()
+
+		s.UploadConfig(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", rec.Code)
+		}
+	})
+
+	t.Run("missing file field", func(t *testing.T) {
+		cm := &mockConfigManagerWithWrites{config: map[string]interface{}{}}
+		s := NewServer(cm, "3001", "test-token", nil, nil, log.New(os.Stdout, "TEST: ", log.LstdFlags))
+
+		body := &bytes.Buffer{}
+		writer := multipart.NewWriter(body)
+		writer.Close()
+
+		req := httptest.NewRequest("POST", "/api/config/upload", body)
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+		rec := httptest.NewRecorder()
+
+		s.UploadConfig(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", rec.Code)
+		}
+	})
+
+	t.Run("non-JSON file extension", func(t *testing.T) {
+		cm := &mockConfigManagerWithWrites{config: map[string]interface{}{}}
+		s := NewServer(cm, "3001", "test-token", nil, nil, log.New(os.Stdout, "TEST: ", log.LstdFlags))
+
+		body := &bytes.Buffer{}
+		writer := multipart.NewWriter(body)
+		part, _ := writer.CreateFormFile("config", "test.txt")
+		part.Write([]byte(`{"servers": []}`))
+		writer.Close()
+
+		req := httptest.NewRequest("POST", "/api/config/upload", body)
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+		rec := httptest.NewRecorder()
+
+		s.UploadConfig(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", rec.Code)
+		}
+	})
 }
