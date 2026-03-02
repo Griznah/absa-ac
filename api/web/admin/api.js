@@ -103,7 +103,13 @@ const APIClient = {
     // Download config as file
     async downloadConfig() {
         const headers = this.buildHeaders(false);
-        const response = await fetch(`${this.baseURL}/config/download`, { headers });
+
+        let response;
+        try {
+            response = await fetch(`${this.baseURL}/config/download`, { headers });
+        } catch (networkError) {
+            return { ok: false, status: 0, error: 'Network error: unable to reach server' };
+        }
 
         if (!response.ok) {
             return { ok: false, status: response.status, error: await this.parseError(response) };
@@ -146,11 +152,16 @@ const APIClient = {
             headers['X-CSRF-Token'] = csrfToken;
         }
 
-        const response = await fetch(`${this.baseURL}/config/upload`, {
-            method: 'POST',
-            headers,
-            body: formData
-        });
+        let response;
+        try {
+            response = await fetch(`${this.baseURL}/config/upload`, {
+                method: 'POST',
+                headers,
+                body: formData
+            });
+        } catch (networkError) {
+            return { ok: false, status: 0, error: 'Network error: unable to reach server' };
+        }
 
         if (response.status === 401) {
             window.Auth?.logout();

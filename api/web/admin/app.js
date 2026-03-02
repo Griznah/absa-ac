@@ -298,8 +298,11 @@ const App = {
 
     // Add new server
     // Creates server with default values matching Server struct (ref: DL-001).
+    // Category defaults to first available category if not specified.
     addServer() {
-        this.servers.push({ name: '', port: 0, category: '' });
+        const categories = this.config.category_order || [];
+        const defaultCategory = categories.length > 0 ? categories[0] : '';
+        this.servers.push({ name: '', port: 0, category: defaultCategory });
         this.renderConfig();
     },
 
