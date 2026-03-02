@@ -274,15 +274,10 @@ func TestLoadConfig_ValidConfig(t *testing.T) {
 	data, _ := json.Marshal(validConfig)
 	os.WriteFile(configPath, data, 0644)
 
-	// Change to temp directory
-	origWd, _ := os.Getwd()
-	os.Chdir(tmpDir)
-	defer os.Chdir(origWd)
-
-	// Test loading
-	cfg, err := loadConfig("")
+	// Test loading with explicit path
+	cfg, err := loadConfig(configPath)
 	if err != nil {
-		t.Fatalf("loadConfig(\"\") failed: %v", err)
+		t.Fatalf("loadConfig(%s) failed: %v", configPath, err)
 	}
 
 	if cfg.ServerIP != "192.168.1.1" {
@@ -300,12 +295,7 @@ func TestLoadConfig_ValidConfig(t *testing.T) {
 
 // TestLoadConfig_FileNotFound tests missing config file returns nil without error
 func TestLoadConfig_FileNotFound(t *testing.T) {
-	tmpDir := t.TempDir()
-	origWd, _ := os.Getwd()
-	os.Chdir(tmpDir)
-	defer os.Chdir(origWd)
-
-	cfg, err := loadConfig("")
+	cfg, err := loadConfig("/nonexistent/path/config.json")
 	if err != nil {
 		t.Fatalf("Expected nil error for missing config file, got: %v", err)
 	}
@@ -322,11 +312,7 @@ func TestLoadConfig_InvalidJSON(t *testing.T) {
 	// Write invalid JSON
 	os.WriteFile(configPath, []byte("{invalid json}"), 0644)
 
-	origWd, _ := os.Getwd()
-	os.Chdir(tmpDir)
-	defer os.Chdir(origWd)
-
-	_, err := loadConfig("")
+	_, err := loadConfig(configPath)
 	if err == nil {
 		t.Fatal("Expected error for invalid JSON, got nil")
 	}
@@ -1085,13 +1071,11 @@ func TestGetConfigPath(t *testing.T) {
 	testCases := []struct {
 		name         string
 		providedPath string
-		setupFunc    func(t *testing.T) func()
 		validateFunc func(t *testing.T, result string)
 	}{
 		{
 			name:         "explicit path is returned",
 			providedPath: "/custom/config.json",
-			setupFunc:    func(t *testing.T) func() { return func() {} },
 			validateFunc: func(t *testing.T, result string) {
 				if result != "/custom/config.json" {
 					t.Errorf("Expected path '/custom/config.json', got: %s", result)
@@ -1099,42 +1083,11 @@ func TestGetConfigPath(t *testing.T) {
 			},
 		},
 		{
-			name:         "uses ./config.json when /data/config.json doesn't exist",
+			name:         "empty path returns /data/config.json",
 			providedPath: "",
-			setupFunc: func(t *testing.T) func() {
-				tmpDir := t.TempDir()
-				configPath := filepath.Join(tmpDir, "config.json")
-				os.WriteFile(configPath, []byte("{}"), 0644)
-
-				origWd, _ := os.Getwd()
-				os.Chdir(tmpDir)
-
-				return func() {
-					os.Chdir(origWd)
-				}
-			},
 			validateFunc: func(t *testing.T, result string) {
-				// Should return the working directory config.json
-				if !strings.Contains(result, "config.json") {
-					t.Errorf("Expected path containing 'config.json', got: %s", result)
-				}
-			},
-		},
-		{
-			name:         "returns empty string when no config found",
-			providedPath: "",
-			setupFunc: func(t *testing.T) func() {
-				tmpDir := t.TempDir()
-				origWd, _ := os.Getwd()
-				os.Chdir(tmpDir)
-
-				return func() {
-					os.Chdir(origWd)
-				}
-			},
-			validateFunc: func(t *testing.T, result string) {
-				if result != "" {
-					t.Errorf("Expected empty string when no config found, got: %s", result)
+				if result != "/data/config.json" {
+					t.Errorf("Expected path '/data/config.json', got: %s", result)
 				}
 			},
 		},
@@ -1142,9 +1095,6 @@ func TestGetConfigPath(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			cleanup := tc.setupFunc(t)
-			defer cleanup()
-
 			result := getConfigPath(tc.providedPath)
 			tc.validateFunc(t, result)
 		})
