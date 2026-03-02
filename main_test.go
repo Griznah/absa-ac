@@ -298,25 +298,19 @@ func TestLoadConfig_ValidConfig(t *testing.T) {
 	}
 }
 
-// TestLoadConfig_FileNotFound tests missing config file
+// TestLoadConfig_FileNotFound tests missing config file returns nil without error
 func TestLoadConfig_FileNotFound(t *testing.T) {
 	tmpDir := t.TempDir()
 	origWd, _ := os.Getwd()
 	os.Chdir(tmpDir)
 	defer os.Chdir(origWd)
 
-	_, err := loadConfig("")
-	if err == nil {
-		t.Fatal("Expected error for missing config file, got nil")
+	cfg, err := loadConfig("")
+	if err != nil {
+		t.Fatalf("Expected nil error for missing config file, got: %v", err)
 	}
-
-	// Error should mention all attempted paths
-	errMsg := err.Error()
-	if !strings.Contains(errMsg, "/data/config.json") {
-		t.Errorf("Error message should mention '/data/config.json', got: %v", errMsg)
-	}
-	if !strings.Contains(errMsg, "config.json") {
-		t.Errorf("Error message should mention 'config.json', got: %v", errMsg)
+	if cfg != nil {
+		t.Errorf("Expected nil config for missing file, got: %+v", cfg)
 	}
 }
 
@@ -767,13 +761,9 @@ func TestCheckAndReloadIfNeeded_FileNotFound(t *testing.T) {
 	// Trigger reload check (schedules debounce)
 	err := cm.checkAndReloadIfNeeded()
 
-	// checkAndReloadIfNeeded returns error during stat (before debounce)
-	if err == nil {
-		t.Error("Expected error for missing file, got nil")
-	}
-
-	if !strings.Contains(err.Error(), "failed to stat config file") {
-		t.Errorf("Expected 'failed to stat config file' error, got: %v", err)
+	// With no-config-at-startup, missing file returns nil (logs warning, skips reload)
+	if err != nil {
+		t.Errorf("Expected nil error for missing file (graceful handling), got: %v", err)
 	}
 
 	// Config should remain unchanged
@@ -2201,6 +2191,158 @@ func TestConfigManager_WriteConfig_InvalidConfig(t *testing.T) {
 
 	if string(initialData) != string(finalData) {
 		t.Error("Config file was modified despite validation error")
+	}
+}
+
+// TestNoConfigStart_NotFatal verifies bot starts without config file and doesn't crash
+func TestNoConfigStart_NotFatal(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	// No config file created - simulate missing config at startup
+	cm := NewConfigManager(configPath, nil)
+
+	if cm == nil {
+		t.Fatal("NewConfigManager returned nil")
+	}
+
+	// GetConfig should return nil without crashing
+	cfg := cm.GetConfig()
+	if cfg != nil {
+		t.Errorf("Expected nil config, got %+v", cfg)
+	}
+
+	// checkAndReloadIfNeeded should not error on missing file
+	err := cm.checkAndReloadIfNeeded()
+	if err != nil {
+		t.Errorf("checkAndReloadIfNeeded should not error on missing file, got: %v", err)
+	}
+}
+
+// TestNoConfigWaitAndLoad verifies bot waits and loads config when file appears
+func TestNoConfigWaitAndLoad(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	// Start with no config
+	cm := NewConfigManager(configPath, nil)
+	if cm.GetConfig() != nil {
+		t.Fatal("Expected nil config at start")
+	}
+
+	// Create config file after delay
+	time.Sleep(10 * time.Millisecond)
+	validConfig := &Config{
+		ServerIP:       "192.168.1.1",
+		UpdateInterval: 30,
+		CategoryOrder:  []string{"Drift"},
+		CategoryEmojis: map[string]string{"Drift": "🟣"},
+		Servers:        []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
+	}
+	data, _ := json.Marshal(validConfig)
+	os.WriteFile(configPath, data, 0644)
+
+	// Trigger reload check
+	err := cm.checkAndReloadIfNeeded()
+	if err != nil {
+		t.Fatalf("checkAndReloadIfNeeded failed: %v", err)
+	}
+
+	// Config should now be loaded
+	cfg := cm.GetConfig()
+	if cfg == nil {
+		t.Fatal("Expected config to be loaded after file creation")
+	}
+	if cfg.ServerIP != "192.168.1.1" {
+		t.Errorf("Expected ServerIP '192.168.1.1', got '%s'", cfg.ServerIP)
+	}
+}
+
+// TestConfigFileDeleted verifies bot handles file deletion gracefully
+func TestConfigFileDeleted(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	// Start with valid config
+	initialConfig := &Config{
+		ServerIP:       "192.168.1.1",
+		UpdateInterval: 30,
+		CategoryOrder:  []string{"Drift"},
+		CategoryEmojis: map[string]string{"Drift": "🟣"},
+		Servers:        []Server{{Name: "Test", Port: 8081, Category: "Drift"}},
+	}
+	data, _ := json.Marshal(initialConfig)
+	os.WriteFile(configPath, data, 0644)
+
+	cm := NewConfigManager(configPath, initialConfig)
+
+	// Verify config is loaded
+	cfg := cm.GetConfig()
+	if cfg == nil || cfg.ServerIP != "192.168.1.1" {
+		t.Fatal("Initial config not loaded correctly")
+	}
+
+	// Delete config file
+	os.Remove(configPath)
+
+	// Trigger reload check - should not error, should keep old config
+	err := cm.checkAndReloadIfNeeded()
+	if err != nil {
+		t.Errorf("checkAndReloadIfNeeded should not error on deleted file, got: %v", err)
+	}
+
+	// Old config should still be available
+	cfg = cm.GetConfig()
+	if cfg == nil {
+		t.Fatal("Config should not be nil after file deletion")
+	}
+	if cfg.ServerIP != "192.168.1.1" {
+		t.Errorf("Expected ServerIP '192.168.1.1' preserved, got '%s'", cfg.ServerIP)
+	}
+}
+
+// TestNoConfigAPIUpdate verifies config can be provided via API (WriteConfig)
+func TestNoConfigAPIUpdate(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	// Start with no config
+	cm := NewConfigManager(configPath, nil)
+	if cm.GetConfig() != nil {
+		t.Fatal("Expected nil config at start")
+	}
+
+	// Simulate API providing config via WriteConfig
+	newConfig := &Config{
+		ServerIP:       "10.0.0.1",
+		UpdateInterval: 60,
+		CategoryOrder:  []string{"Race"},
+		CategoryEmojis: map[string]string{"Race": "🏎️"},
+		Servers:        []Server{{Name: "RaceServer", Port: 9000, Category: "Race"}},
+	}
+
+	err := cm.WriteConfig(newConfig)
+	if err != nil {
+		t.Fatalf("WriteConfig failed: %v", err)
+	}
+
+	// Config file should be created
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		t.Error("Config file was not created")
+	}
+
+	// Config should be available via GetConfig after hot-reload
+	err = cm.checkAndReloadIfNeeded()
+	if err != nil {
+		t.Fatalf("checkAndReloadIfNeeded failed: %v", err)
+	}
+
+	cfg := cm.GetConfig()
+	if cfg == nil {
+		t.Fatal("Expected config to be available after WriteConfig")
+	}
+	if cfg.ServerIP != "10.0.0.1" {
+		t.Errorf("Expected ServerIP '10.0.0.1', got '%s'", cfg.ServerIP)
 	}
 }
 

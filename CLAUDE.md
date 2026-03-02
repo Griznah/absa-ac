@@ -7,7 +7,7 @@ Discord bot for monitoring Assetto Corsa racing servers with dynamic configurati
 | File | What | When to read |
 | ---- | ---- | ------------ |
 | `README.md` | Complete documentation: architecture, deployment, migration guide, troubleshooting, operational procedures, REST API usage | Understanding how the bot works, deploying, debugging issues, learning config reload design |
-| `main.go` | Monolithic bot implementation: types, config loading (with dynamic reload), server fetching, Discord integration, optional REST API server, update loop | Understanding architecture, modifying behavior, adding features |
+| `main.go` | Monolithic bot implementation: types, config loading (with dynamic reload, no-config-at-startup support), server fetching, Discord integration, optional REST API server, update loop | Understanding architecture, modifying behavior, adding features, debugging no-config startup |
 | `main_test.go` | Unit tests for config validation, ConfigManager, and reload behavior | Verifying changes, adding tests, debugging reload logic |
 | `config.json.example` | Template for server configuration | Setting up new deployment, understanding config schema |
 | `Containerfile` | Container image definition with Go static binary | Building containers, deployment, understanding runtime |
@@ -34,6 +34,7 @@ Discord bot for monitoring Assetto Corsa racing servers with dynamic configurati
 | `pkg/` | Shared packages for internal reuse | Understanding shared components |
 | `pkg/proxy/` | Reverse proxy for browser-based API access via HTTP Basic Auth | Understanding proxy architecture, modifying auth/forwarding behavior |
 | `plans/` | Working planning documents for executed features | Understanding implementation history, decision rationale for past changes |
+| `plans/no-config-at-startup.md` | Planning document for no-config-at-startup feature: graceful handling of missing config at startup, nil config support in ConfigManager, container deployment patterns | Understanding why bot starts without config, nil config handling invariants, container deployment decisions |
 
 ## Build
 

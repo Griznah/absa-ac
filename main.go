@@ -195,11 +195,13 @@ func NewConfigManager(configPath string, initial *Config) *ConfigManager {
 	}
 	cm.config.Store(initial)
 
-	// Get initial file modification time
-	if modTime, err := cm.getLastModTime(); err == nil {
-		cm.lastModTime = modTime
-	} else {
-		log.Printf("Warning: failed to get initial config mod time: %v", err)
+	// Get initial file modification time (only if config exists)
+	if initial != nil {
+		if modTime, err := cm.getLastModTime(); err == nil {
+			cm.lastModTime = modTime
+		} else {
+			log.Printf("Warning: failed to get initial config mod time: %v", err)
+		}
 	}
 
 	return cm
@@ -209,7 +211,11 @@ func NewConfigManager(configPath string, initial *Config) *ConfigManager {
 // atomic.Value.Load() provides zero-copy access without mutex contention
 // Multiple goroutines can call this simultaneously during server polling
 func (cm *ConfigManager) GetConfig() *Config {
-	return cm.config.Load().(*Config)
+	val := cm.config.Load()
+	if val == nil {
+		return nil
+	}
+	return val.(*Config)
 }
 
 // getLastModTime retrieves the modification time of the config file (changes indicate config modifications requiring reload)
@@ -230,9 +236,18 @@ func (cm *ConfigManager) checkAndReloadIfNeeded() error {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 
+	// If no config currently loaded, check if file exists now
+	if cm.config.Load() == nil {
+		log.Printf("No config loaded, checking if config file exists...")
+	}
+
 	// Check current file modification time
 	currentModTime, err := cm.getLastModTime()
 	if err != nil {
+		if os.IsNotExist(err) {
+			log.Printf("Config file not found, skipping reload")
+			return nil
+		}
 		return fmt.Errorf("failed to stat config file: %w", err)
 	}
 
@@ -263,6 +278,12 @@ func (cm *ConfigManager) checkAndReloadIfNeeded() error {
 	newCfg, err := loadConfig(cm.configPath)
 	if err != nil {
 		return fmt.Errorf("failed to read config: %w", err)
+	}
+
+	// If loadConfig returned nil (file not found), skip reload
+	if newCfg == nil {
+		log.Printf("Config file not found during reload attempt")
+		return nil
 	}
 
 	// Validate new config
@@ -779,6 +800,10 @@ func loadConfig(providedPath string) (*Config, error) {
 		log.Printf("Loading config from provided path: %s", providedPath)
 		data, err := os.ReadFile(providedPath)
 		if err != nil {
+			if os.IsNotExist(err) {
+				log.Printf("Config file not found at %s, starting without config", providedPath)
+				return nil, nil
+			}
 			return nil, fmt.Errorf("failed to read config from %s: %w", providedPath, err)
 		}
 
@@ -821,7 +846,11 @@ func loadConfig(providedPath string) (*Config, error) {
 		return &cfg, nil
 	}
 
-	return nil, fmt.Errorf("failed to load config from any default location:\n%s", strings.Join(errors, "\n"))
+	// No config file found in any default location
+	log.Printf("Config file not found at any default location. Starting without config.")
+	log.Printf("Searched locations: /data/config.json, ./config.json")
+	log.Printf("Waiting for config to be created or provided via API...")
+	return nil, nil
 }
 
 // getConfigPath determines the actual config file path that loadConfig uses
@@ -927,6 +956,9 @@ var httpClient = &http.Client{
 
 func fetchAllServers(cfgManager *ConfigManager) []ServerInfo {
 	cfg := cfgManager.GetConfig()
+	if cfg == nil {
+		return []ServerInfo{}
+	}
 	var wg sync.WaitGroup
 	infos := make([]ServerInfo, len(cfg.Servers))
 	mu := sync.Mutex{}
@@ -1191,9 +1223,20 @@ func (b *Bot) registerHandlers() {
 // ================= UPDATE LOOP =================
 
 func (b *Bot) startUpdateLoop() {
+	// Use default interval if no config loaded
+	defaultInterval := 30 * time.Second
 	cfg := b.configManager.GetConfig()
-	ticker := time.NewTicker(time.Duration(cfg.UpdateInterval) * time.Second)
+	interval := defaultInterval
+	if cfg != nil {
+		interval = time.Duration(cfg.UpdateInterval) * time.Second
+	} else {
+		log.Printf("No config loaded, using default update interval: %v", defaultInterval)
+	}
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+
+	// Track current interval to detect changes
+	currentInterval := interval
 
 	// Immediate first update
 	b.performUpdate()
@@ -1203,11 +1246,30 @@ func (b *Bot) startUpdateLoop() {
 		if err := b.checkForConfigUpdates(); err != nil {
 			log.Printf("Config reload check failed: %v", err)
 		}
+
+		// Check if interval changed and update ticker
+		cfg := b.configManager.GetConfig()
+		newInterval := defaultInterval
+		if cfg != nil {
+			newInterval = time.Duration(cfg.UpdateInterval) * time.Second
+		}
+		if newInterval != currentInterval {
+			ticker.Reset(newInterval)
+			currentInterval = newInterval
+			log.Printf("Update interval changed to %v", newInterval)
+		}
+
 		b.performUpdate()
 	}
 }
 
 func (b *Bot) performUpdate() {
+	cfg := b.configManager.GetConfig()
+	if cfg == nil {
+		log.Printf("Skipping update: no valid config loaded. Waiting for config...")
+		return
+	}
+
 	// Fetch all server info concurrently
 	infos := fetchAllServers(b.configManager)
 
@@ -1532,12 +1594,16 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}
-	validateConfigStruct(cfg)
+	if cfg == nil {
+		log.Printf("Config file not found, starting without config. Waiting for config...")
+	} else {
+		validateConfigStruct(cfg)
 
-	// Initialize server IPs before ConfigManager creation (required for lock-free readers via atomic.Value)
-	initializeServerIPs(cfg)
+		// Initialize server IPs before ConfigManager creation (required for lock-free readers via atomic.Value)
+		initializeServerIPs(cfg)
+	}
 
-	// Create config manager with initial config
+	// Create config manager with initial config (may be nil)
 	configManager := NewConfigManager(getConfigPath(*configPath), cfg)
 	bot, err := NewBot(configManager, token, channelID, apiEnabled, apiPort, apiBearerToken, apiCorsOrigins, apiTrustedProxyList, proxyEnabled, proxyCfg)
 	if err != nil {
