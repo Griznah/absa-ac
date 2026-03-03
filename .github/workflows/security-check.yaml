@@ -15,8 +15,6 @@ jobs:
       - name: Run truffleHog secrets scan
         uses: trufflesecurity/trufflehog@v3.93.6
         with:
-          base: ${{ github.event.repository.default_branch }}
-          head: HEAD
           extra_args: --results=verified,unknown
 
   govulncheck:
