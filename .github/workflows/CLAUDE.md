@@ -6,4 +6,5 @@ GitHub Actions CI/CD workflows for automated container builds and security scann
 
 | File | What | When to read |
 | ---- | ---- | ------------ |
-| `docker-publish.yml` | Automated Docker image build, test, and publish pipeline for version tags | Understanding release automation, modifying build workflow, adding CI steps |
+| `docker-publish.yaml` | Automated Docker image build, test, and publish pipeline for version tags | Understanding release automation, modifying build workflow, adding CI steps |
+| `security-check.yaml` | Automated security testing and Docker image build and test for main | Understanding CI |
