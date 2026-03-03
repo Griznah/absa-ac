@@ -793,97 +793,39 @@ type Config struct {
 	Servers        []Server          `json:"servers"`
 }
 
-// loadConfig reads and parses config.json with fallback logic
+// loadConfig reads and parses config.json
 func loadConfig(providedPath string) (*Config, error) {
-	// If explicitly provided, only try that path
-	if providedPath != "" {
-		log.Printf("Loading config from provided path: %s", providedPath)
-		data, err := os.ReadFile(providedPath)
-		if err != nil {
-			if os.IsNotExist(err) {
-				log.Printf("Config file not found at %s, starting without config", providedPath)
-				return nil, nil
-			}
-			return nil, fmt.Errorf("failed to read config from %s: %w", providedPath, err)
-		}
-
-		var cfg Config
-		if err := json.Unmarshal(data, &cfg); err != nil {
-			return nil, fmt.Errorf("failed to parse config from %s: %w", providedPath, err)
-		}
-
-		log.Printf("Successfully loaded config from: %s", providedPath)
-		return &cfg, nil
+	// Determine the config path to use
+	configPath := providedPath
+	if configPath == "" {
+		configPath = "/data/config.json"
 	}
 
-	// Otherwise, try default locations in priority order
-	wd, err := os.Getwd()
+	log.Printf("Loading config from: %s", configPath)
+	data, err := os.ReadFile(configPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get working directory: %w", err)
-	}
-
-	defaultPaths := []string{
-		"/data/config.json",
-		filepath.Join(wd, "config.json"),
-	}
-
-	var errors []string
-	for _, path := range defaultPaths {
-		log.Printf("Attempting to load config from: %s", path)
-
-		data, err := os.ReadFile(path)
-		if err != nil {
-			errors = append(errors, fmt.Sprintf("  %s: %v", path, err))
-			continue
+		if os.IsNotExist(err) {
+			log.Printf("Config file not found at %s, starting without config", configPath)
+			return nil, nil
 		}
-
-		var cfg Config
-		if err := json.Unmarshal(data, &cfg); err != nil {
-			return nil, fmt.Errorf("failed to parse config from %s: %w", path, err)
-		}
-
-		log.Printf("Successfully loaded config from: %s", path)
-		return &cfg, nil
+		return nil, fmt.Errorf("failed to read config from %s: %w", configPath, err)
 	}
 
-	// No config file found in any default location
-	log.Printf("Config file not found at any default location. Starting without config.")
-	log.Printf("Searched locations: /data/config.json, ./config.json")
-	log.Printf("Waiting for config to be created or provided via API...")
-	return nil, nil
+	var cfg Config
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("failed to parse config from %s: %w", configPath, err)
+	}
+
+	log.Printf("Successfully loaded config from: %s", configPath)
+	return &cfg, nil
 }
 
-// getConfigPath determines the actual config file path that loadConfig uses
-// Matches loadConfig's fallback logic exactly: provided path -> /data/config.json -> ./config.json
+// getConfigPath determines the config file path that loadConfig uses
 func getConfigPath(providedPath string) string {
-	// If explicitly provided, return that path (matches loadConfig's provided-path mode)
 	if providedPath != "" {
 		return providedPath
 	}
-
-	// Otherwise, try default locations in same priority order as loadConfig's fallback mode
-	wd, err := os.Getwd()
-	if err != nil {
-		// If we can't get working directory, config load fails
-		// Return empty string to signal error condition
-		return ""
-	}
-
-	defaultPaths := []string{
-		"/data/config.json",
-		filepath.Join(wd, "config.json"),
-	}
-
-	// Return first existing path (matches loadConfig's fallback priority order)
-	for _, path := range defaultPaths {
-		if _, err := os.Stat(path); err == nil {
-			return path
-		}
-	}
-
-	// No config file found - this matches loadConfig's error return when all paths fail
-	// Empty string signals that no valid config path exists
-	return ""
+	return "/data/config.json"
 }
 
 // validateConfigStruct performs fail-fast validation on loaded config
