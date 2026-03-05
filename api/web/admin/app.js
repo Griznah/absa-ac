@@ -319,6 +319,8 @@ const App = {
         }
     },
 
+    // Refreshes config from server after validation to show current server state.
+    // Matches refresh pattern used in saveConfig and handleFileSelect. (ref: DL-001)
     // Validate config via API
     async validateConfig() {
         this.collectFormChanges();
@@ -327,6 +329,7 @@ const App = {
         // 400 = JSON syntax error
         if (response.ok || response.status === 501) {
             this.showMessage('JSON syntax is valid', 'success');
+            await this.loadConfig(); // Refresh from server
         } else {
             this.showMessage('Validation failed: ' + response.error, 'error');
         }
