@@ -27,6 +27,11 @@ const App = {
             this.handleLogout();
         });
 
+        // Login again button (on logged out screen)
+        document.getElementById('login-again-btn').addEventListener('click', () => {
+            this.showLoginScreen();
+        });
+
         // Add server button
         document.getElementById('add-server-btn').addEventListener('click', () => {
             this.addServer();
@@ -105,12 +110,20 @@ const App = {
     // Handle logout
     handleLogout() {
         window.Auth.logout();
-        this.showLoginScreen();
+        this.showLoggedOutScreen();
     },
 
-    // Show login screen
+    // Show logged out screen (after explicit logout)
+    showLoggedOutScreen() {
+        document.getElementById('login-screen').classList.add('hidden');
+        document.getElementById('logged-out-screen').classList.remove('hidden');
+        document.getElementById('config-screen').classList.add('hidden');
+    },
+
+    // Show login screen (for initial auth or "log in again")
     showLoginScreen() {
         document.getElementById('login-screen').classList.remove('hidden');
+        document.getElementById('logged-out-screen').classList.add('hidden');
         document.getElementById('config-screen').classList.add('hidden');
         document.getElementById('token-input').value = '';
     },
@@ -118,6 +131,7 @@ const App = {
     // Show config screen and load data
     async showConfigScreen() {
         document.getElementById('login-screen').classList.add('hidden');
+        document.getElementById('logged-out-screen').classList.add('hidden');
         document.getElementById('config-screen').classList.remove('hidden');
         await this.loadConfig();
     },
