@@ -1,5 +1,5 @@
 <!-- Admin UI: Single-page app for AC Bot configuration (ref: DL-002). -->
-<!-- Two-screen design: login form, then config editor. -->
+<!-- Three-screen design: login form, logged out confirmation, config editor. -->
 <!-- Security: password input type prevents token visibility. -->
 <!-- Script load order: auth.js -> api.js -> app.js (dependency chain). -->
 <!DOCTYPE html>
@@ -13,7 +13,7 @@
 <body>
     <div id="app">
         <!-- Login Screen -->
-        <section id="login-screen" class="screen">
+        <section id="login-screen" class="screen hidden">
             <h1>AC Bot Configuration</h1>
             <form id="login-form">
                 <div class="form-group">
@@ -26,6 +26,13 @@
                 <button type="submit" id="login-btn">Login</button>
                 <p id="login-error" class="error-message hidden"></p>
             </form>
+        </section>
+
+        <!-- Logged Out Screen -->
+        <section id="logged-out-screen" class="screen hidden">
+            <h1>Logged Out</h1>
+            <p>Your session has ended.</p>
+            <button id="login-again-btn">Log in again</button>
         </section>
 
         <!-- Main Config Editor -->
