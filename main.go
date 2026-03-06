@@ -348,6 +348,14 @@ func (cm *ConfigManager) WriteConfig(newConfig *Config) error {
 		return fmt.Errorf("failed to update config mod time: %w", err)
 	}
 
+	// Atomically swap in-memory config and update mod time
+	// This ensures GetConfig returns the new config immediately after write
+	cm.config.Store(newConfig)
+	cm.lastModTime, err = cm.getLastModTime()
+	if err != nil {
+		return fmt.Errorf("failed to get config mod time: %w", err)
+	}
+
 	return nil
 }
 
@@ -396,6 +404,14 @@ func (cm *ConfigManager) UpdateConfig(partial map[string]interface{}) error {
 	// Update mod time
 	if err := cm.touchConfigFile(); err != nil {
 		log.Printf("Warning: failed to update config mod time: %v", err)
+	}
+
+	// Atomically swap in-memory config and update mod time
+	// This ensures GetConfig returns the merged config immediately after update
+	cm.config.Store(merged)
+	cm.lastModTime, err = cm.getLastModTime()
+	if err != nil {
+		log.Printf("Warning: failed to get config mod time: %v", err)
 	}
 
 	return nil
