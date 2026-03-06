@@ -1,4 +1,4 @@
-name: Run security check on main push
+name: Run security check on pull requests
 
 permissions:
   contents: read
