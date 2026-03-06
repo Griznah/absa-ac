@@ -1,35 +1,49 @@
 name: Run security check on main push
 
+permissions:
+  contents: read
+
+# Prevent concurrent runs on the same branch
+concurrency:
+  group: security-check-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
-  push:
-    branches:
-    - main
+  pull_request:
 
 jobs:
   secretscan:
+    name: Run truffleHog secrets scan
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        # actions/checkout@v6.0.2 (pinned SHA: de0fac2e4500dabe0009e67214ff5f5447ce83dd)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Run truffleHog secrets scan
-        uses: trufflesecurity/trufflehog@v3.93.6
+        # trufflesecurity/trufflehog@v3.93.7 (pinned SHA: c3e599b7163e8198a55467f3133db0e7b2a492cb)
+        uses: trufflesecurity/trufflehog@c3e599b7163e8198a55467f3133db0e7b2a492cb
         with:
           extra_args: --results=verified,unknown
 
   govulncheck:
+    name: Run govulncheck (Go dependency vulnerability scan)
     runs-on: ubuntu-latest
     needs: secretscan
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        # actions/checkout@v6.0.2 (pinned SHA: de0fac2e4500dabe0009e67214ff5f5447ce83dd)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          persist-credentials: false
 
       - name: Run govulncheck (Go dependency vulnerability scan)
-        uses: golang/govulncheck-action@v1
+        # golang/govulncheck-action@v1.0.4 (pinned SHA: b625fbe08f3bccbe446d94fbf87fcc875a4f50ee)
+        uses: golang/govulncheck-action@b625fbe08f3bccbe446d94fbf87fcc875a4f50ee
         with:
           go-version-input: 1.26.0
           go-package: ./...
-          output-format: text
-
