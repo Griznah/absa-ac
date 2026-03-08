@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: read
-  # Only enable packages: write for build-and-push job
 
 # Prevent concurrent runs on the same branch
 concurrency:
@@ -92,6 +91,8 @@ jobs:
     name: Build and push Docker image
     runs-on: ubuntu-latest
     needs: [govulncheck, image-test]
+    permissions:
+      packages: write
     steps:
       - name: Checkout repository
         # actions/checkout@v4.0.0 (pinned SHA: 1e31de5234b9f8995739874a8ce0492dc87873e2)

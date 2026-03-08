@@ -5,7 +5,6 @@ on:
 
 permissions:
   contents: read
-  # Only enable packages: write for build-and-push job
 
 # Prevent concurrent runs on the same branch
 concurrency:
@@ -86,8 +85,8 @@ jobs:
           fi
           echo "PASS: Container runs as non-root $uid:$gid"
 
-  build-and-push:
-    name: Build and push Docker image
+  build:
+    name: Build Docker image
     runs-on: ubuntu-latest
     needs: [govulncheck, image-test]
     steps:
@@ -102,14 +101,6 @@ jobs:
         # docker/setup-buildx-action@v4.0.0 (pinned SHA: 4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd)
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd
 
-      - name: Log in to GitHub Container Registry
-        # docker/login-action@v4.0.0 (pinned SHA: b45d80f862d83dbcd57f89517bcf500b2ab88fb2)
-        uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ github.token }}
-
       - name: Extract metadata
         id: meta
         # docker/metadata-action@v6.0.0 (pinned SHA: 030e881283bb7a6894de51c315a6bfe6a94e05cf)
@@ -121,7 +112,7 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest
 
-      - name: Build and push Docker image
+      - name: Build Docker image
         # docker/build-push-action@v7.0.0 (pinned SHA: d08e5c354a6adb9ed34480a06d141179aa583294)
         uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294
         with:
