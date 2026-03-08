@@ -36,8 +36,4 @@ USER 1001
 EXPOSE 3001
 EXPOSE 8080
 
-# Set environment variables (replace at runtime)
-ENV DISCORD_TOKEN=""
-ENV CHANNEL_ID=""
-
 CMD ["./bot"]
