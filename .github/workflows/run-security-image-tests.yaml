@@ -68,7 +68,7 @@ jobs:
       - name: Build image (local cache only)
         id: build-local
         # docker/build-push-action@v7.0.0 (pinned SHA: d08e5c354a6adb9ed34480a06d141179aa583294)
-        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294
+        uses: docker/build-push-action@83bfd93ab480705a7b99a2ed02765137f5ab55ba
         with:
           context: .
           push: false
@@ -114,7 +114,7 @@ jobs:
 
       - name: Build Docker image
         # docker/build-push-action@v7.0.0 (pinned SHA: d08e5c354a6adb9ed34480a06d141179aa583294)
-        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294
+        uses: docker/build-push-action@83bfd93ab480705a7b99a2ed02765137f5ab55ba
         with:
           context: .
           push: false
