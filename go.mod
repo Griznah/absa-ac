@@ -4,7 +4,7 @@ go 1.26.1
 
 require (
 	github.com/bwmarrin/discordgo v0.29.0
-	golang.org/x/time v0.14.0
+	golang.org/x/time v0.15.0
 )
 
 require (
