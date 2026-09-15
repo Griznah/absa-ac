@@ -96,7 +96,7 @@ gofmt -w .                               # Format code
 
 ## REST API Development
 
-See `api/CLAUDE.md` for API package documentation and `api/README.md` for architecture details.
+See `api/AGENTS.md` for API package documentation and `api/README.md` for architecture details.
 
 ```bash
 # Run API-specific tests
