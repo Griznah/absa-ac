@@ -23,6 +23,12 @@ Monitors Assetto Corsa servers, posts to Discord. Dynamic config reload. Optiona
 | `pkg/` | Shared packages |
 | `plans/` | Decision records per feature — see `plans/AGENTS.md` |
 
+## Process
+- All work on separate branches
+- Before building anything non-trivial, make a plan and use a review skill before presenting it to the user
+- Use relevant skills to review code before creating PRs
+- After opening a PR on GitHub wait for external AI reviewers
+
 ## Build
 
 ```bash
