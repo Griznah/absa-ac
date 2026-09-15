@@ -1,6 +1,6 @@
 module github.com/bombom/absa-ac
 
-go 1.26.4
+go 1.27.1
 
 require (
 	github.com/bwmarrin/discordgo v0.29.0
