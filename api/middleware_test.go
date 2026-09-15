@@ -268,43 +268,43 @@ func TestLogger(t *testing.T) {
 
 func TestCORS(t *testing.T) {
 	tests := []struct {
-		name         string
+		name           string
 		allowedOrigins []string
-		origin       string
-		method       string
-		wantStatus   int
+		origin         string
+		method         string
+		wantStatus     int
 		wantCORSHeader string
 	}{
 		{
-			name:         "Normal: OPTIONS request returns CORS headers",
+			name:           "Normal: OPTIONS request returns CORS headers",
 			allowedOrigins: []string{"https://example.com"},
-			origin:       "https://example.com",
-			method:       "OPTIONS",
-			wantStatus:   http.StatusNoContent,
+			origin:         "https://example.com",
+			method:         "OPTIONS",
+			wantStatus:     http.StatusNoContent,
 			wantCORSHeader: "https://example.com",
 		},
 		{
-			name:         "Edge: Request from disallowed origin returns 403",
+			name:           "Edge: Request from disallowed origin returns 403",
 			allowedOrigins: []string{"https://example.com"},
-			origin:       "https://evil.com",
-			method:       "GET",
-			wantStatus:   http.StatusForbidden,
+			origin:         "https://evil.com",
+			method:         "GET",
+			wantStatus:     http.StatusForbidden,
 			wantCORSHeader: "",
 		},
 		{
-			name:         "Normal: Wildcard allows all origins",
+			name:           "Normal: Wildcard allows all origins",
 			allowedOrigins: []string{"*"},
-			origin:       "https://anywhere.com",
-			method:       "GET",
-			wantStatus:   http.StatusOK,
+			origin:         "https://anywhere.com",
+			method:         "GET",
+			wantStatus:     http.StatusOK,
 			wantCORSHeader: "https://anywhere.com",
 		},
 		{
-			name:         "Edge: Missing Origin header is handled gracefully",
+			name:           "Edge: Missing Origin header is handled gracefully",
 			allowedOrigins: []string{"https://example.com"},
-			origin:       "",
-			method:       "GET",
-			wantStatus:   http.StatusOK,
+			origin:         "",
+			method:         "GET",
+			wantStatus:     http.StatusOK,
 			wantCORSHeader: "",
 		},
 	}
@@ -375,9 +375,9 @@ func TestSecurityHeaders(t *testing.T) {
 
 func TestIsRoutableIP(t *testing.T) {
 	tests := []struct {
-		name   string
-		ipStr  string
-		want   bool
+		name  string
+		ipStr string
+		want  bool
 	}{
 		{
 			name:  "Normal: Public IPv4 is routable",
@@ -459,9 +459,9 @@ func TestIsRoutableIP(t *testing.T) {
 
 func TestNormalizeIP(t *testing.T) {
 	tests := []struct {
-		name     string
-		ipStr    string
-		want     string
+		name  string
+		ipStr string
+		want  string
 	}{
 		{
 			name:  "Normal: IPv4 address is unchanged",
@@ -727,8 +727,8 @@ func TestRateLimiterCleanup(t *testing.T) {
 				// Create a limiter and access it
 				rm.mu.Lock()
 				rm.limiters["127.0.0.1"] = &rateLimiter{
-					limiter:     rate.NewLimiter(10, 5),
-					lastAccess:  time.Now(),
+					limiter:    rate.NewLimiter(10, 5),
+					lastAccess: time.Now(),
 				}
 				rm.mu.Unlock()
 			},
@@ -750,8 +750,8 @@ func TestRateLimiterCleanup(t *testing.T) {
 				// Create a limiter with old access time
 				rm.mu.Lock()
 				rm.limiters["192.168.1.1"] = &rateLimiter{
-					limiter:     rate.NewLimiter(10, 5),
-					lastAccess:  time.Now().Add(-6 * time.Minute),
+					limiter:    rate.NewLimiter(10, 5),
+					lastAccess: time.Now().Add(-6 * time.Minute),
 				}
 				rm.mu.Unlock()
 			},
@@ -775,8 +775,8 @@ func TestRateLimiterCleanup(t *testing.T) {
 				for i := 0; i < 100; i++ {
 					ip := fmt.Sprintf("192.168.1.%d", i)
 					rm.limiters[ip] = &rateLimiter{
-						limiter:     rate.NewLimiter(10, 5),
-						lastAccess:  time.Now(),
+						limiter:    rate.NewLimiter(10, 5),
+						lastAccess: time.Now(),
 					}
 				}
 				rm.mu.Unlock()
@@ -824,8 +824,8 @@ func TestRateLimiterCleanup_IncrementalProcessing(t *testing.T) {
 	for i := 0; i < 2500; i++ {
 		ip := fmt.Sprintf("10.0.%d.%d", i/256, i%256)
 		rm.limiters[ip] = &rateLimiter{
-			limiter:     rate.NewLimiter(10, 5),
-			lastAccess:  time.Now().Add(-6 * time.Minute),
+			limiter:    rate.NewLimiter(10, 5),
+			lastAccess: time.Now().Add(-6 * time.Minute),
 		}
 	}
 	rm.mu.Unlock()
@@ -885,8 +885,8 @@ func TestRateLimiterCleanup_ConcurrentAccess(t *testing.T) {
 	for i := 0; i < 500; i++ {
 		ip := fmt.Sprintf("192.168.1.%d", i)
 		rm.limiters[ip] = &rateLimiter{
-			limiter:     rate.NewLimiter(10, 5),
-			lastAccess:  time.Now(),
+			limiter:    rate.NewLimiter(10, 5),
+			lastAccess: time.Now(),
 		}
 	}
 	rm.mu.Unlock()
@@ -921,8 +921,8 @@ func TestRateLimiterCleanup_ConcurrentAccess(t *testing.T) {
 				ip := fmt.Sprintf("10.0.%d.%d", worker, j)
 				rm.mu.Lock()
 				rm.limiters[ip] = &rateLimiter{
-					limiter:     rate.NewLimiter(10, 5),
-					lastAccess:  time.Now(),
+					limiter:    rate.NewLimiter(10, 5),
+					lastAccess: time.Now(),
 				}
 				rm.mu.Unlock()
 			}
@@ -964,8 +964,8 @@ func TestRateLimiterCleanup_ContextCancellation(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		ip := fmt.Sprintf("192.168.1.%d", i)
 		rm.limiters[ip] = &rateLimiter{
-			limiter:     rate.NewLimiter(10, 5),
-			lastAccess:  time.Now(),
+			limiter:    rate.NewLimiter(10, 5),
+			lastAccess: time.Now(),
 		}
 	}
 	rm.mu.Unlock()
@@ -995,8 +995,8 @@ func TestRateLimiterCleanup_PanicRecovery(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		ip := fmt.Sprintf("192.168.1.%d", i)
 		panicRm.limiters[ip] = &rateLimiter{
-			limiter:     rate.NewLimiter(10, 5),
-			lastAccess:  time.Now().Add(-6 * time.Minute),
+			limiter:    rate.NewLimiter(10, 5),
+			lastAccess: time.Now().Add(-6 * time.Minute),
 		}
 	}
 
@@ -1022,8 +1022,8 @@ func TestRateLimiterCleanup_PanicRecovery(t *testing.T) {
 
 	rm.mu.Lock()
 	rm.limiters["127.0.0.1"] = &rateLimiter{
-		limiter:     rate.NewLimiter(10, 5),
-		lastAccess:  time.Now().Add(-6 * time.Minute),
+		limiter:    rate.NewLimiter(10, 5),
+		lastAccess: time.Now().Add(-6 * time.Minute),
 	}
 	rm.mu.Unlock()
 

@@ -39,10 +39,10 @@ func TestConfigLoadFromEnv(t *testing.T) {
 		{
 			name: "all env vars set",
 			envVars: map[string]string{
-				"PROXY_PORT":        "9000",
-				"PROXY_API_URL":     "http://upstream:3001",
-				"PROXY_USER":        "admin",
-				"PROXY_PASSWORD":    "secretpass123",
+				"PROXY_PORT":         "9000",
+				"PROXY_API_URL":      "http://upstream:3001",
+				"PROXY_USER":         "admin",
+				"PROXY_PASSWORD":     "secretpass123",
 				"PROXY_BEARER_TOKEN": "my-token",
 			},
 			expectedConfig: Config{
@@ -214,8 +214,8 @@ func TestConfigFailFast(t *testing.T) {
 		{
 			name: "complete config passes validation",
 			envVars: map[string]string{
-				"PROXY_USER":        "admin",
-				"PROXY_PASSWORD":    "secretpassword",
+				"PROXY_USER":         "admin",
+				"PROXY_PASSWORD":     "secretpassword",
 				"PROXY_BEARER_TOKEN": "token",
 			},
 			hasError: false,

@@ -31,7 +31,7 @@ type Server struct {
 	wg sync.WaitGroup
 
 	// cancel is stored to allow Stop() to cancel the Start() context
-	cancel context.CancelFunc
+	cancel   context.CancelFunc
 	cancelMu sync.Mutex
 }
 
@@ -90,12 +90,12 @@ func (s *Server) Start(ctx context.Context) error {
 	// CSRF defense-in-depth: validates state-changing requests following auth
 
 	var handler http.Handler = mux
-	handler = CSRF(handler)                              // CSRF validation for state-changing requests
-	handler = authMiddleware(handler)                    // Innermost: check auth last
-	handler = rateLimitMiddleware(handler)               // Apply rate limiting before expensive auth
-	handler = loggerMiddleware(handler)                  // Log all requests including rate limited ones
-	handler = corsMiddleware(handler)                    // Handle CORS preflight before rate limiting
-	handler = securityHeadersMiddleware(handler)         // Outermost: security headers applied to all responses
+	handler = CSRF(handler)                      // CSRF validation for state-changing requests
+	handler = authMiddleware(handler)            // Innermost: check auth last
+	handler = rateLimitMiddleware(handler)       // Apply rate limiting before expensive auth
+	handler = loggerMiddleware(handler)          // Log all requests including rate limited ones
+	handler = corsMiddleware(handler)            // Handle CORS preflight before rate limiting
+	handler = securityHeadersMiddleware(handler) // Outermost: security headers applied to all responses
 
 	s.httpServer.Handler = handler
 

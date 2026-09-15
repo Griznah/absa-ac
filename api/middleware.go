@@ -17,16 +17,16 @@ import (
 )
 
 const (
-	maxForwardedIps      = 10
-	cleanupBatchSize     = 1000
-	cleanupInterval      = 5 * time.Minute
-	rateLimiterExpiry    = 5 * time.Minute
-	cleanupRestartDelay  = 1 * time.Minute
+	maxForwardedIps     = 10
+	cleanupBatchSize    = 1000
+	cleanupInterval     = 5 * time.Minute
+	rateLimiterExpiry   = 5 * time.Minute
+	cleanupRestartDelay = 1 * time.Minute
 )
 
 // rateLimiter wraps a rate.Limiter with last access time for cleanup
 type rateLimiter struct {
-	limiter     *rate.Limiter
+	limiter    *rate.Limiter
 	lastAccess time.Time
 }
 
@@ -347,7 +347,7 @@ func RateLimit(requestsPerSecond int, burstSize int, trustedProxies []string, ct
 				rl, exists = rm.limiters[clientIP]
 				if !exists {
 					rl = &rateLimiter{
-						limiter:     rate.NewLimiter(rate.Limit(requestsPerSecond), burstSize),
+						limiter:    rate.NewLimiter(rate.Limit(requestsPerSecond), burstSize),
 						lastAccess: time.Now(),
 					}
 					rm.limiters[clientIP] = rl

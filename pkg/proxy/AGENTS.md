@@ -1,15 +1,13 @@
 # pkg/proxy/
 
-Reverse proxy server for browser-based API access via HTTP Basic Auth.
+Reverse proxy for browser API access via HTTP Basic Auth.
 
-## Files
-
-| File | What | When to read |
-| ---- | ---- | ------------ |
-| `README.md` | Architecture, invariants, tradeoffs, middleware chain | Understanding why proxy exists, security design, deployment decisions |
-| `config.go` | Config struct, environment loading, validation | Understanding proxy configuration, adding new env vars |
-| `server.go` | HTTP server lifecycle, graceful shutdown, health endpoint | Modifying server behavior, debugging startup/shutdown |
-| `auth.go` | BasicAuth middleware, constant-time comparison, client IP extraction | Debugging auth failures, modifying authentication logic |
-| `handler.go` | ProxyHandler, Bearer token injection, hop-by-hop header filtering, upstream error handling | Modifying request forwarding, debugging upstream issues |
-| `logging.go` | AccessLog middleware, response status capture | Adding request logging, debugging request flow |
-| `config_test.go` | Config validation tests | Verifying config changes, adding new validation tests |
+| File | What |
+| ---- | ---- |
+| `README.md` | Architecture, invariants, tradeoffs |
+| `config.go` | Config struct, env loading, validation |
+| `server.go` | Server lifecycle, graceful shutdown, health endpoint |
+| `auth.go` | BasicAuth middleware, constant-time compare, client IP extraction |
+| `handler.go` | ProxyHandler: Bearer injection, hop-by-hop header filtering, upstream errors |
+| `logging.go` | AccessLog middleware, response status capture |
+| `config_test.go` | Config validation tests |

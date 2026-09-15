@@ -37,7 +37,7 @@ func generateConfig(numServers int) map[string]interface{} {
 		"server_ip":       "192.168.1.100",
 		"update_interval": 30,
 		"category_order":  categories,
-			"category_emojis": emojis,
+		"category_emojis": emojis,
 		"servers":         servers,
 	}
 }

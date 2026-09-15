@@ -178,7 +178,7 @@ func TestCORSWildcardBypass(t *testing.T) {
 		wantOK bool
 	}{
 		{"Same origin", "http://localhost:3001", true},
-		{"Malicious origin", "http://evil.com", true}, // VULNERABLE: wildcard allows all
+		{"Malicious origin", "http://evil.com", true},             // VULNERABLE: wildcard allows all
 		{"Another malicious origin", "http://attacker.net", true}, // VULNERABLE
 	}
 

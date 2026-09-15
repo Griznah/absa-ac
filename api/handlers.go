@@ -12,7 +12,7 @@ import (
 // No authentication required (used for health checks)
 func HealthCheck(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, map[string]string{
-		"status": "ok",
+		"status":  "ok",
 		"service": "ac-bot-api",
 	})
 }
@@ -178,10 +178,10 @@ func (s *Server) ValidateConfig(w http.ResponseWriter, r *http.Request) {
 	// Full schema validation (field presence, types, business rules) is not available
 	// through the ConfigManager interface without creating a circular dependency
 	WriteJSON(w, http.StatusNotImplemented, map[string]interface{}{
-		"valid":      false,
+		"valid":       false,
 		"json_syntax": true,
-		"message":   "JSON syntax is valid, but full schema validation is not available through this endpoint",
-		"note":      "Apply the config via PUT /api/config to trigger full validation",
+		"message":     "JSON syntax is valid, but full schema validation is not available through this endpoint",
+		"note":        "Apply the config via PUT /api/config to trigger full validation",
 	})
 }
 

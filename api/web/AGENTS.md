@@ -1,9 +1,7 @@
 # api/web/
 
-Web frontend assets for the API server.
+Frontend assets.
 
-## Subdirectories
-
-| Directory | What | When to read |
-| --------- | ---- | ------------ |
-| `admin/` | Embedded admin frontend: login/config editor SPA with vanilla JS | Understanding admin UI, modifying frontend behavior, security design |
+| Directory | What |
+| --------- | ---- |
+| `admin/` | Embedded admin SPA, vanilla JS — see `admin/AGENTS.md` |

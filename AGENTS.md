@@ -1,40 +1,27 @@
-# AC Discord Bot with REST API
+# AC Discord Bot + REST API
 
-Discord bot for monitoring Assetto Corsa racing servers with dynamic configuration reloading and optional REST API for runtime configuration management.
+Monitors Assetto Corsa servers, posts to Discord. Dynamic config reload. Optional REST API for runtime config management.
 
 ## Files
 
-| File | What | When to read |
-| ---- | ---- | ------------ |
-| `README.md` | Complete documentation: architecture, deployment, troubleshooting, operational procedures, REST API usage | Understanding how the bot works, deploying, debugging issues, learning config reload design |
-| `main.go` | Monolithic bot implementation: types, config loading (single default path /data/config.json, dynamic reload, no-config-at-startup support), server fetching, Discord integration, optional REST API server, update loop | Understanding architecture, modifying behavior, adding features, debugging config path or no-config startup |
-| `main_test.go` | Unit tests for config validation, ConfigManager, and reload behavior | Verifying changes, adding tests, debugging reload logic |
-| `config.json.example` | Template for server configuration | Setting up new deployment, understanding config schema |
-| `Containerfile` | Container image definition with Go static binary | Building containers, deployment, understanding runtime |
-| `PODMAN.md` | Podman-specific deployment instructions and examples | Deploying with Podman, understanding container setup |
-| `go.mod` | Go module dependencies and version pinning | Updating dependencies, checking versions |
-| `go.sum` | Go module checksums for dependency verification | Verifying dependency integrity, reproducing builds |
-| `.gitignore` | Git ignore patterns (binaries, config files, IDE files) | Understanding what's excluded from version control |
-| `.env.example` | Template for environment variables (DISCORD_TOKEN, CHANNEL_ID, API settings) | Setting up local development, configuring deployment |
-| `SECURITY.md` | Security guide: incident response, credential rotation, pre-release checklist | Understanding security procedures, responding to incidents |
-| `CONTRIBUTING.md` | Contribution guidelines and development standards | Understanding how to contribute, coding standards |
-| `LICENSE` | MIT license terms | Understanding usage rights, licensing requirements |
-| `test_cleanup.sh` | Script for cleaning up test resources | Running test cleanup, managing test artifacts |
-| `test_api_token_fails.sh` | Startup security integration test for API_BEARER_TOKEN validation | Verifying fail-fast token validation, testing security requirements |
-| `test_cors_fails.sh` | Startup security integration test for CORS wildcard validation | Verifying CORS fail-fast behavior, testing production safety checks |
+| File | What |
+| ---- | ---- |
+| `README.md` | Full docs: architecture, deployment, troubleshooting, REST API |
+| `main.go` | Bot core: types, config load/reload (default /data/config.json, `-c` override, no-config startup), server fetch, Discord, update loop; wires `api.Server` |
+| `main_test.go` | Config validation, ConfigManager, reload tests |
+| `config.json.example` | Config schema |
+| `Containerfile` | Container image, Go static binary |
+| `.env.example` | Env vars: DISCORD_TOKEN, CHANNEL_ID, API_* |
+| `test_*.sh` | Fail-fast startup validation + cleanup scripts |
 
 ## Subdirectories
 
-| Directory | What | When to read |
-| --------- | ---- | ------------ |
-| `.github/workflows/` | CI/CD pipeline for automated container builds and security scanning | Understanding release process, modifying build workflow, setting up CI |
-| `api/` | HTTP API server with middleware chain, config endpoints, security layers, embedded admin frontend | Understanding API architecture, modifying endpoints, security hardening, admin UI serving |
-| `api/web/admin/` | Embedded admin frontend: login/config editor SPA with vanilla JS | Understanding admin UI, modifying frontend behavior, security design |
-| `pkg/` | Shared packages for internal reuse | Understanding shared components |
-| `pkg/proxy/` | Reverse proxy for browser-based API access via HTTP Basic Auth | Understanding proxy architecture, modifying auth/forwarding behavior |
-| `plans/` | Working planning documents for executed features | Understanding implementation history, decision rationale for past changes |
-| `plans/no-config-at-startup.md` | Planning document for no-config-at-startup feature: graceful handling of missing config at startup, nil config support in ConfigManager, container deployment patterns | Understanding why bot starts without config, nil config handling invariants, container deployment decisions |
-| `plans/data-config-json.md` | Planning document for config path simplification: single default path /data/config.json, removed ./config.json fallback | Understanding container-first config path design, getConfigPath/loadConfig synchronization |
+| Directory | What |
+| --------- | ---- |
+| `.github/workflows/` | CI/CD: container build + publish, security scan |
+| `api/` | REST API server, middleware, admin UI — see `api/AGENTS.md` |
+| `pkg/` | Shared packages |
+| `plans/` | Decision records per feature — see `plans/AGENTS.md` |
 
 ## Build
 
@@ -45,70 +32,21 @@ go build -o bot .
 ## Test
 
 ```bash
-go test -v ./...                         # Run all tests
-go test -v -run TestConfigReload         # Test config reload specifically
-go test -v -run TestConfigManager        # Test ConfigManager behavior
-go test -v ./api/...                     # Run API package tests
-go test -v ./api/ -run TestBearerAuth    # Test authentication middleware
-go test -v ./api/ -bench=. -benchmem     # Run benchmarks
+go test -v ./...                      # all
+go test -v ./api/...                  # API package (unit, E2E, benchmarks)
+go test -v ./api/ -bench=. -benchmem  # benchmarks
 ```
 
-## Development
+## Run
 
-**Environment setup:**
 ```bash
-go mod download                           # Install dependencies
-
-# Required for Discord bot
-export DISCORD_TOKEN="your_token"
-export CHANNEL_ID="your_channel_id"
-
-# Optional: Enable REST API
-export API_ENABLED="true"
-export API_PORT="3001"
-export API_BEARER_TOKEN="your-secure-token"
-export API_CORS_ORIGINS="https://example.com"
-export API_TRUSTED_PROXY_IPS=""
+export DISCORD_TOKEN="..." CHANNEL_ID="..."
+go run main.go -c config.json         # default path: /data/config.json
 ```
 
-**Running locally:**
-```bash
-go run main.go                           # Uses /data/config.json (container default)
-go run main.go -c /path/to/config.json   # Uses specified config
-```
-
-**Config reload testing:**
-```bash
-# Terminal 1: Start bot (default path is /data/config.json — pass -c for a local file)
-go run main.go -c config.json
-
-# Terminal 2: Modify config
-vim config.json
-
-# Terminal 1: Watch for "Config reloaded successfully" log
-```
-
-**Formatting:**
-```bash
-gofmt -l .                               # Check formatting
-gofmt -w .                               # Format code
-```
-
-## REST API Development
-
-See `api/AGENTS.md` for API package documentation and `api/README.md` for architecture details.
+## Format
 
 ```bash
-# Run API-specific tests
-go test -v ./api/...
-
-# Run middleware tests (auth, rate limiting, CORS)
-go test -v ./api/ -run TestBearerAuth
-go test -v ./api/ -run TestRateLimit
-
-# Run E2E tests
-go test -v ./api/ -run TestE2E
-
-# Run benchmarks
-go test -v ./api/ -bench=. -benchmem
+gofmt -l .   # check
+gofmt -w .   # fix
 ```

@@ -61,7 +61,7 @@ func TestHandlers_GetConfig(t *testing.T) {
 		{
 			name: "Normal: Returns current config",
 			config: map[string]interface{}{
-				"server_ip": "192.168.1.1",
+				"server_ip":       "192.168.1.1",
 				"update_interval": 60,
 				"servers": []map[string]interface{}{
 					{"name": "Server1", "port": 8081},
@@ -184,8 +184,8 @@ func TestHandlers_PutConfig(t *testing.T) {
 		wantStatus int
 	}{
 		{
-			name: "Normal: Full config replacement",
-			body: `{"server_ip":"10.0.0.1","update_interval":30,"category_order":["Race"],"category_emojis":{"Race":"🏎️"},"servers":[]}`,
+			name:       "Normal: Full config replacement",
+			body:       `{"server_ip":"10.0.0.1","update_interval":30,"category_order":["Race"],"category_emojis":{"Race":"🏎️"},"servers":[]}`,
 			wantStatus: http.StatusOK,
 		},
 		{
