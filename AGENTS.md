@@ -7,7 +7,7 @@ Monitors Assetto Corsa servers, posts to Discord. Dynamic config reload. Optiona
 | File | What |
 | ---- | ---- |
 | `README.md` | Full docs: architecture, deployment, troubleshooting, REST API |
-| `main.go` | Bot core: types, config load/reload (default /data/config.json, `-c` override, no-config startup), server fetch, Discord, update loop; wires `api.Server` |
+| `main.go` | Bot core: types, config load/reload (default /data/config.json, `-c` override, no-config startup), server fetch, Discord, update loop; wires `api.Server` and `pkg/proxy` |
 | `main_test.go` | Config validation, ConfigManager, reload tests |
 | `config.json.example` | Config schema |
 | `Containerfile` | Container image, Go static binary |
