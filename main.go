@@ -790,6 +790,7 @@ type Bot struct {
 	configManager *ConfigManager
 	serverMessage *discordgo.Message
 	messageMutex  sync.RWMutex
+	readyOnce     sync.Once
 
 	// API server (optional - nil if disabled)
 	apiServer *api.Server
@@ -1141,13 +1142,17 @@ func (b *Bot) updateStatusMessage(embed *discordgo.MessageEmbed) error {
 func (b *Bot) onReady(s *discordgo.Session, event *discordgo.Ready) {
 	log.Printf("✅ Logged in as %s", s.State.User.Username)
 
-	// Clean up old messages
-	if err := b.cleanupOldMessages(); err != nil {
-		log.Printf("Warning: cleanup failed: %v", err)
-	}
+	// Discord re-delivers READY on gateway reconnects; run cleanup and loop
+	// spawn exactly once per process (issue #39).
+	b.readyOnce.Do(func() {
+		// Clean up old messages
+		if err := b.cleanupOldMessages(); err != nil {
+			log.Printf("Warning: cleanup failed: %v", err)
+		}
 
-	// Start update loop in background goroutine
-	go b.startUpdateLoop()
+		// Start update loop in background goroutine
+		go b.startUpdateLoop()
+	})
 }
 
 func (b *Bot) cleanupOldMessages() error {
