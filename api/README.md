@@ -49,39 +49,6 @@ HTTP Request → Security Headers → CORS → Logger → Rate Limit → Bearer 
 4. Discord bot reads config via ConfigManager.GetConfig() (RLock)
 5. File watcher (ConfigManager) detects mtime changes, reloads with debounce
 
-### API Server Architecture
-
-```
-HTTP Request
-    │
-    ▼
-┌──────────────────────────────────────────────────────────┐
-│ Middleware Chain (order matters)                         │
-│  1. SecurityHeaders    - outermost (applies to all)     │
-│  2. CORS              - cross-origin checks              │
-│  3. Logger            - request logging                  │
-│  4. RateLimit         - throttling before expensive auth │
-│  5. BearerAuth        - innermost (token validation)     │
-└──────────────────────────────────────────────────────────┘
-    │
-    ▼
-┌──────────────────────────────────────────────────────────┐
-│ Route Handler (handlers.go)                              │
-│  - Context cancellation check                            │
-│  - Request size limit (1MB)                              │
-│  - JSON decode                                           │
-│  - ConfigManager method call                             │
-└──────────────────────────────────────────────────────────┘
-    │
-    ▼
-┌──────────────────────────────────────────────────────────┐
-│ ConfigManager (main.go)                                  │
-│  - RWMutex for concurrent access                         │
-│  - Deep merge for partial updates                        │
-│  - Atomic file write with backup rotation                │
-└──────────────────────────────────────────────────────────┘
-```
-
 ## Middleware Layers
 
 ### Security Headers (Outermost)
@@ -238,51 +205,6 @@ Malformed IP addresses in `API_TRUSTED_PROXY_IPS` cause immediate exit at startu
 export API_TRUSTED_PROXY_IPS="192.168.1.1,invalid-ip"
 # Server exits: "failed to parse trusted proxy IP 'invalid-ip': invalid IP"
 ```
-
-## Middleware Details
-
-### BearerAuth
-
-**Purpose**: Validates OAuth2 Bearer tokens using constant-time comparison.
-
-**Flow**:
-1. Bypass auth for `/health` endpoint
-2. Extract `Authorization` header
-3. Validate "Bearer " prefix
-4. Compare token value with `ConstantTimeCompare`
-5. Log authentication attempt (token redacted)
-6. Return 401 if mismatch, pass to next handler if match
-
-**Security**: Always executes full comparison regardless of mismatch position. Response time is independent of token length or match position.
-
-### RateLimit
-
-**Purpose**: Token bucket rate limiting per client IP with memory leak protection.
-
-**IP extraction**: Calls `extractClientIP()` with trusted proxy validation (see IP spoofing prevention).
-
-**Rate limiter lifecycle**:
-1. Look up limiter for client IP (with mutex protection)
-2. Create new limiter if not exists (double-checked locking)
-3. Update `lastAccess` timestamp
-4. Check if request allowed within rate limit
-5. Return 429 if exceeded, pass to next handler if allowed
-
-**Background cleanup**: Every 5 minutes, process 1,000 entries and delete those with `lastAccess` older than 5 minutes.
-
-### Trusted Proxy Configuration
-
-**Environment variable**: `API_TRUSTED_PROXY_IPS` (comma-separated list, empty default)
-
-**Behavior**:
-- Empty (default): Ignores `X-Forwarded-For` entirely, uses `RemoteAddr`
-- Configured: Validates `X-Forwarded-For` only from trusted proxy IPs
-- Malformed: Exits immediately at startup (fail-fast)
-
-**Deployment patterns**:
-- No proxy: Leave empty (secure default)
-- Single proxy: Set to proxy IP (e.g., `10.0.0.1`)
-- CDN + proxy: Set to both IPs (e.g., `10.0.0.1,10.0.0.2`)
 
 ## Observability
 
@@ -509,38 +431,7 @@ Development: `"*"` wildcard for local testing
 Production: Explicit origin allowlist (e.g., `https://admin.example.com`)
 Never combine `"*"` with specific origins (ambiguous security policy)
 
-# Get current config
-curl -H "Authorization: Bearer $API_TOKEN" \
-  http://localhost:3001/api/config
-
-# Get servers only
-curl -H "Authorization: Bearer $API_TOKEN" \
-  http://localhost:3001/api/config/servers
-
-# Partial update (PATCH)
-curl -X PATCH \
-  -H "Authorization: Bearer $API_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"update_interval": 120}' \
-  http://localhost:3001/api/config
-
-# Full replacement (PUT)
-curl -X PUT \
-  -H "Authorization: Bearer $API_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d @config.json \
-  http://localhost:3001/api/config
-
-# Validate without applying
-curl -X POST \
-  -H "Authorization: Bearer $API_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d @config.json \
-  http://localhost:3001/api/config/validate
-
-# Health check (no auth required)
-curl http://localhost:3001/health
-```
+### Graceful Shutdown
 
 1. Context cancellation signal received
 2. HTTP server calls `Shutdown()` with 30-second timeout

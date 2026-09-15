@@ -4,7 +4,7 @@ Thank you for your interest in contributing! This guide will help you set up loc
 
 ## Prerequisites
 
-- **Go 1.25.5+** - [Install Go](https://golang.org/doc/install)
+- **Go 1.27.1+** - [Install Go](https://golang.org/doc/install)
 - **Git** - [Install Git](https://git-scm.com/)
 - **Discord Bot Token** - See [Discord Bot Setup](#discord-bot-setup) below
 - **Optional**: Docker/Podman for containerized testing
@@ -63,7 +63,7 @@ nano config.json  # Customize your servers
 ### 5. Run the Bot
 
 ```bash
-go run main.go
+go run main.go -c config.json
 ```
 
 ## Development
@@ -103,10 +103,10 @@ gofmt -w .
 
 ### Debugging
 
-Enable verbose output to troubleshoot issues:
+Enable log output to troubleshoot issues (there is no `-v` flag):
 
 ```bash
-go run main.go -v
+go run main.go -c config.json
 ```
 
 Common issues:

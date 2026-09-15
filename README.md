@@ -17,9 +17,9 @@ Discord bot for monitoring and displaying status information for Assetto Corsa r
 
 ## Prerequisites
 
-- **Go 1.25.5** or later
+- **Go 1.27.1** or later
 - Discord bot token ([Discord Developer Portal](https://discord.com/developers/applications))
-- config.json file (see Configuration section below)
+- config.json file (optional at startup — the bot starts and waits for one; see Configuration section below)
 
 ## Running Locally
 
@@ -49,7 +49,7 @@ go mod download
 4. Run the bot:
 
 ```bash
-# Use default config paths (tries /data/config.json, then ./config.json)
+# Use default config path (/data/config.json); starts and waits if no config found
 go run main.go
 
 # Or specify a custom config file
@@ -62,7 +62,7 @@ Or build and run:
 ```bash
 go build -o bot .
 
-# Use default config paths
+# Use default config path (/data/config.json)
 ./bot
 
 # Specify custom config file
@@ -84,14 +84,15 @@ The bot supports command-line flags for specifying the config file location:
 The bot loads configuration in the following priority order:
 
 1. **Command-line flag** (if provided): `-c` or `--config` - uses only this path
-2. **Container path**: `/data/config.json` - checked when no flag is provided
-3. **Local path**: `./config.json` - checked when no flag is provided (fallback for local development)
+2. **Default path**: `/data/config.json` - used when no flag is provided
+
+If no config file is found, the bot starts anyway, logs `starting without config. Waiting for config...`, and skips status updates until a valid config appears (rechecked every update cycle).
 
 ### Examples
 
 ```bash
-# Local development - uses ./config.json
-./bot
+# Local development - pass config explicitly
+./bot -c ./config.json
 
 # Container deployment - automatically finds /data/config.json
 podman run -v $(pwd)/config.json:/data/config.json:ro ac-discordbot
@@ -383,62 +384,14 @@ See [SECURITY.md](./SECURITY.md) for:
 
 - The container *must not* run as root. It is built/run as `USER 1001 (absabot)`.
 - The application will immediately refuse to start as root (UID 0).
-- The container must not run as root. It is built/run as `USER 1001 (absabot)`.
-- The application will immediately refuse to start as root (UID 0).
 - **CI pipeline runs an image test job on every build:**
   - Launches the image and verifies the run-time UID/GID is 1001/1001 (never root)
   - If the image is ever accidentally changed to root (UID 0) the build will fail before pushing/publishing.
 - See troubleshooting for example file permissions and typical errors (the application does not enforce config file/directory permissions at runtime).
 
-### Podman (Recommended)
+### Podman / Docker
 
-```bash
-podman build -t ac-discordbot .
-
-# Create config file
-mkdir -p /opt/ac-discordbot
-cp config.json.example /opt/ac-discordbot/config.json
-nano /opt/ac-discordbot/config.json
-
-# Fix permissions for non-root container user (UID 1001)
-sudo chown 1001:1001 /opt/ac-discordbot/config.json
-sudo chmod 644 /opt/ac-discordbot/config.json
-
-# Run container with volume mount (bot will find /data/config.json automatically)
-podman run -d \
-  --name ac-discordbot \
-  -e DISCORD_TOKEN="your_token" \
-  -e CHANNEL_ID="your_channel_id" \
-  -v /opt/ac-discordbot/config.json:/data/config.json:ro \
-  --restart unless-stopped \
-  ac-discordbot
-```
-
-### Docker
-
-The `Containerfile` is compatible with Docker:
-
-```bash
-docker build -t ac-discordbot .
-
-# Create config file
-mkdir -p /opt/ac-discordbot
-cp config.json.example /opt/ac-discordbot/config.json
-nano /opt/ac-discordbot/config.json
-
-# Fix permissions for non-root container user (UID 1001)
-sudo chown 1001:1001 /opt/ac-discordbot/config.json
-sudo chmod 644 /opt/ac-discordbot/config.json
-
-# Run container with volume mount (bot will find /data/config.json automatically)
-docker run -d \
-  --name ac-discordbot \
-  -e DISCORD_TOKEN="your_token" \
-  -e CHANNEL_ID="your_channel_id" \
-  -v /opt/ac-discordbot/config.json:/data/config.json:ro \
-  --restart unless-stopped \
-  ac-discordbot
-```
+See [PODMAN.md](./PODMAN.md) for build, run, file permissions (UID 1001), Docker Compose, and troubleshooting. Docker works as a drop-in alias for `podman`.
 
 ### CI/CD
 
@@ -446,114 +399,15 @@ The bot uses GitHub Actions to automatically build and push Docker images to Git
 
 Available images: `ghcr.io/{owner}/ac-discordbot:latest`
 
-## Migration Guide
-
-**Breaking Change:** The bot now uses `config.json` for server configuration. The `SERVER_IP` environment variable is no longer used.
-
-### For Existing Deployments
-
-1. **Create config.json from example:**
-
-   ```bash
-   cp config.json.example config.json
-   ```
-
-2. **Copy your server list:**
-
-   Edit `config.json` and add your servers. The server format has changed from environment variables to JSON:
-
-   ```json
-   {
-     "server_ip": "your.server.ip",
-     "update_interval": 30,
-     "category_order": ["Drift", "Touge", "Track"],
-     "category_emojis": {
-       "Drift": "🏎️",
-       "Touge": "⛰️",
-       "Track": "🛤️"
-     },
-     "servers": [
-       {
-         "name": "Your Server Name",
-         "port": 8091,
-         "category": "Drift"
-       }
-     ]
-   }
-   ```
-
-3. **Update container run command:**
-
-   Add volume mount for config.json and remove `SERVER_IP` environment variable:
-
-   ```bash
-   # Old command (DO NOT USE)
-   podman run -d \
-     --name ac-discordbot \
-     -e DISCORD_TOKEN="your_token" \
-     -e CHANNEL_ID="your_channel_id" \
-     -e SERVER_IP="your.server.ip" \
-     --restart unless-stopped \
-     ac-discordbot
-
-   # New command (USE THIS)
-   podman run -d \
-     --name ac-discordbot \
-     -e DISCORD_TOKEN="your_token" \
-     -e CHANNEL_ID="your_channel_id" \
-     -v /opt/ac-discordbot/config.json:/data/config.json:ro \
-     --restart unless-stopped \
-     ac-discordbot
-   ```
-
-4. **Test configuration locally:**
-
-   ```bash
-   # Validate JSON syntax
-   jq . config.json
-
-   # Run bot locally to verify
-   go run main.go
-   ```
-
-5. **Deploy updated container:**
-
-   ```bash
-   # Stop and remove old container
-   podman stop ac-discordbot
-   podman rm ac-discordbot
-
-   # Pull latest image
-   podman pull ghcr.io/{owner}/ac-discordbot:latest
-
-   # Run with new configuration
-   podman run -d \
-     --name ac-discordbot \
-     -e DISCORD_TOKEN="your_token" \
-     -e CHANNEL_ID="your_channel_id" \
-     -v /opt/ac-discordbot/config.json:/data/config.json:ro \
-     --restart unless-stopped \
-     ghcr.io/{owner}/ac-discordbot:latest
-   ```
-
-6. **Verify deployment:**
-
-   ```bash
-   # Check logs for successful config load
-   podman logs ac-discordbot | grep "Loading config"
-   podman logs ac-discordbot | grep "Configuration validated"
-   ```
-
 ## Troubleshooting
 
 ### config.json Not Found
 
-**Error:** `failed to load config from any location`
+**Not an error anymore:** a missing config file no longer aborts startup. The bot logs `starting without config. Waiting for config...` and skips updates until a valid config appears.
 
 **Solutions:**
-- The bot tries multiple paths: command-line flag → `/data/config.json` → `./config.json`
+- Default path is `/data/config.json` only; use `-c` to point elsewhere
 - For containers: verify volume mount path is `/data/config.json`
-- For local development: verify config.json exists in working directory
 - Use absolute host paths in volume mounts (not relative paths)
 - Verify mount syntax: `-v /absolute/host/path:/data/config.json:ro`
 - Or use the `-c` flag to specify the exact path: `./bot -c /path/to/config.json`
@@ -563,11 +417,9 @@ Available images: `ghcr.io/{owner}/ac-discordbot:latest`
 # Check what the container sees
 podman exec ac-discordbot ls -la /data/
 
-# Check logs for exact path being searched
-podman logs ac-discordbot | grep "Attempting to load config"
-
-# List all attempted paths on failure
-podman logs ac-discordbot | grep "failed to load config"
+# Check logs for the path searched and the not-found message
+podman logs ac-discordbot | grep "Loading config from"
+podman logs ac-discordbot | grep "starting without config"
 ```
 
 ### Permission Denied
@@ -813,29 +665,11 @@ for i, server := range servers {
 
 ### Adding Servers
 
-Edit `config.json` and add a new server object to the `servers` array:
+Add a server object to the `servers` array in `config.json` (schema above):
 
-```json
-{
-  "servers": [
-    {
-      "name": "Server Name",
-      "port": 8091,
-      "category": "Drift"
-    },
-    {
-      "name": "Another Server",
-      "port": 8092,
-      "category": "Touge"
-    }
-  ]
-}
-```
-
-**Notes:**
-- The `server_ip` from the top level is automatically prepended to each server's address
-- The `category` must exist in the `category_order` array
-- The `port` is the HTTP query port, not the game port (typically game port + 100)
+- `server_ip` from the top level is automatically prepended to each server's address
+- `category` must exist in the `category_order` array
+- `port` is the HTTP query port, not the game port (typically game port + 100)
 
 ## ConfigManager Architecture
 
@@ -860,13 +694,13 @@ Config reload checked at the start of each update cycle, before server polling.
 ```
 Config file modified
   -> checkAndReloadIfNeeded() detects mtime change
-  -> scheduleReload() starts 100ms debounce timer
-  -> performReload() loads and validates new config
+  -> 5ms settle delay batches rapid editor writes
+  -> config loaded and validated in the same call
   -> atomic.Value.Store() swaps config atomically
   -> Next update cycle uses new config
 ```
 
-**Debouncing:** Text editors create multiple write events during save. The 100ms debounce timer batches these writes into a single reload attempt, preventing CPU waste and potential race conditions. Still provides near-instant updates from admin perspective.
+**Debouncing:** Text editors create multiple writes during save. A short 5ms settle delay plus a re-check of the file mtime batches these writes into a single reload attempt, preventing CPU waste and stale reads.
 
 ### Thread-Safety Strategy
 
@@ -893,32 +727,22 @@ Config file modified
   -> Next update cycle retries reload
 ```
 
-**Validation rules** (from validateConfigStructSafeRuntime in main.go):
-- `server_ip` must be non-empty
-- `update_interval` must be >= 1 second
-- `category_order` must be non-empty array
-- All categories in `category_order` must have emoji in `category_emojis`
-- All servers must have non-empty name, valid port (1-65535), and valid category
-- Server category must exist in `category_order`
-
 ### ConfigManager Structure
 
 ```go
 type ConfigManager struct {
-    config        atomic.Value // stores *Config (lock-free reads)
-    configPath    string
-    lastModTime   time.Time
-    mu            sync.RWMutex
-    debounceTimer *time.Timer  // Debounces rapid file writes
+    config      atomic.Value // stores *Config (lock-free reads)
+    configPath  string
+    lastModTime time.Time
+    mu          sync.RWMutex
 }
 ```
 
 **Key methods:**
 - `GetConfig() *Config` - Lock-free read via atomic.Value.Load()
-- `checkAndReloadIfNeeded() error` - Called every update cycle, checks mtime
-- `scheduleReload()` - Starts 100ms debounce timer on file change
-- `performReload() error` - Loads, validates, and atomically swaps config
-- `Cleanup()` - Stops debounce timer during shutdown (called from Bot.WaitForShutdown)
+- `checkAndReloadIfNeeded() error` - Called every update cycle: checks mtime, reloads and validates synchronously
+- `WriteConfig() / UpdateConfig()` - Atomic config writes with backup rotation (used by the REST API)
+- `Cleanup()` - No-op, kept for shutdown compatibility (called from Bot.WaitForShutdown)
 
 ### Invariants
 
@@ -958,6 +782,7 @@ failed to reload config: <error reason>
 - **Missing field:** "server_ip cannot be empty" - Ensure all required fields present
 - **Invalid port:** "invalid port: 70000 (valid range: 1-65535)"
 - **Unknown category:** "category 'X' which is not defined in category_order"
+- **Reload loop:** continuous "Config reloaded successfully" — unstable mtime (network mounts, time sync); check `stat config.json` stability, prefer a local file
 
 **Recovery procedure:**
 1. Fix the config file error (use `jq . config.json` to validate JSON syntax)
@@ -965,39 +790,13 @@ failed to reload config: <error reason>
 3. Verify log shows "Config reloaded successfully"
 4. Check Discord embed reflects new configuration
 
-### Troubleshooting Config Reload
-
-**Config changes not applied:**
-- Symptom: Config file modified but Discord embed doesn't update
-- Diagnosis: `tail -f /var/log/ac-discordbot.log | grep -E "(Config reloaded|config validation)"`
-- Expected logs: "Config reloaded successfully" or "config validation failed: <error>"
-- Common causes: JSON syntax error, invalid port, missing required field, unknown category
-
-**Config reload loop:**
-- Symptom: Continuous "Config reloaded successfully" messages
-- Cause: File system modification time issues (network mounts, time sync)
-- Resolution: Check `stat config.json` stability, consider local file instead of network mount
-
-**No health check endpoint:**
-- Bot does not expose HTTP endpoints for config health checks
-- Monitor logs to verify config reload status
-- Use `grep` or log aggregation to detect reload failures
-
-**Log monitoring example:**
-```bash
-# Alert on validation failures
-tail -f bot.log | grep --line-buffered "config validation failed" | while read line; do
-  echo "ALERT: $line"
-  # Send alert (email, Slack, etc.)
-done
-```
-
 ### Testing Config Reload
 
 **Manual testing:**
 ```bash
 # Terminal 1: Start bot
-go run main.go
+# (default path is /data/config.json — pass -c for a local file)
+go run main.go -c config.json
 
 # Terminal 2: Modify config (triggers reload within 30s)
 vim config.json
@@ -1009,7 +808,7 @@ vim config.json
 **Validation failure recovery:**
 ```bash
 # Terminal 1: Start bot
-go run main.go
+go run main.go -c config.json
 
 # Terminal 2: Break config with invalid JSON
 echo '{"invalid": json}' > config.json
@@ -1038,17 +837,16 @@ vim config.json  # Fix the JSON
 
 **Tradeoff:** Max 30-second delay before detecting config changes, but eliminates external dependency and reduces code complexity.
 
-### Read-Only Config Access
+### Read-Only Update Loop, Writes via API
 
-**Decision:** Bot detects config changes but never writes config file.
+**Decision:** The update loop only reads config. Config writes happen only through the optional REST API (`WriteConfig`/`UpdateConfig`), which uses atomic temp-file-then-rename writes with backup rotation.
 
 **Rationale:**
-- User requirement confirmed: read-only access
-- Simpler implementation (no file locking or write coordination)
-- Architecture supports adding write capability later without breaking changes
-- Eliminates risk of bot corrupting config file
+- Update loop needs no file locking or write coordination
+- Writes centralized in ConfigManager: atomic writes plus 3-version backup rotation
+- Bot's own mtime polling picks up API writes automatically
 
-**Tradeoff:** Cannot persist config changes from runtime, but meets current requirements and maintains simplicity.
+**Tradeoff:** Runtime config changes require the API (or a manual file edit), never the update loop.
 
 ### Atomic Config Swap vs Partial Updates
 

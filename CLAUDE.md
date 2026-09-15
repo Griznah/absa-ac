@@ -6,7 +6,7 @@ Discord bot for monitoring Assetto Corsa racing servers with dynamic configurati
 
 | File | What | When to read |
 | ---- | ---- | ------------ |
-| `README.md` | Complete documentation: architecture, deployment, migration guide, troubleshooting, operational procedures, REST API usage | Understanding how the bot works, deploying, debugging issues, learning config reload design |
+| `README.md` | Complete documentation: architecture, deployment, troubleshooting, operational procedures, REST API usage | Understanding how the bot works, deploying, debugging issues, learning config reload design |
 | `main.go` | Monolithic bot implementation: types, config loading (single default path /data/config.json, dynamic reload, no-config-at-startup support), server fetching, Discord integration, optional REST API server, update loop | Understanding architecture, modifying behavior, adding features, debugging config path or no-config startup |
 | `main_test.go` | Unit tests for config validation, ConfigManager, and reload behavior | Verifying changes, adding tests, debugging reload logic |
 | `config.json.example` | Template for server configuration | Setting up new deployment, understanding config schema |
@@ -17,7 +17,6 @@ Discord bot for monitoring Assetto Corsa racing servers with dynamic configurati
 | `.gitignore` | Git ignore patterns (binaries, config files, IDE files) | Understanding what's excluded from version control |
 | `.env.example` | Template for environment variables (DISCORD_TOKEN, CHANNEL_ID, API settings) | Setting up local development, configuring deployment |
 | `SECURITY.md` | Security guide: incident response, credential rotation, pre-release checklist | Understanding security procedures, responding to incidents |
-| `CODEBASE_ANALYSIS.md` | Detailed codebase analysis and architecture documentation | Understanding project structure, security considerations |
 | `CONTRIBUTING.md` | Contribution guidelines and development standards | Understanding how to contribute, coding standards |
 | `LICENSE` | MIT license terms | Understanding usage rights, licensing requirements |
 | `test_cleanup.sh` | Script for cleaning up test resources | Running test cleanup, managing test artifacts |
@@ -80,8 +79,8 @@ go run main.go -c /path/to/config.json   # Uses specified config
 
 **Config reload testing:**
 ```bash
-# Terminal 1: Start bot
-go run main.go
+# Terminal 1: Start bot (default path is /data/config.json — pass -c for a local file)
+go run main.go -c config.json
 
 # Terminal 2: Modify config
 vim config.json

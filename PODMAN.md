@@ -1,6 +1,6 @@
 # Docker / Podman
 
-This Dockerfile uses [uv](https://github.com/astral-sh/uv) for fast Python package management.
+Multi-stage build: `golang:1.27.1-alpine` builder compiles a static Go binary, which runs in an `alpine:3.24` runtime image.
 
 **Note:** We prefer `podman` for local development. All commands below use `podman`, but you can use `docker` as an alias if needed. The CI/CD pipeline uses Docker for production builds.
 
@@ -78,8 +78,8 @@ podman run -d \
 
 The `:ro` flag makes the mount read-only for additional security. To edit configuration:
 1. Edit config file on host
-2. Restart the container: `podman restart ac-discordbot`
-3. Bot loads the new configuration on startup
+2. The bot detects the change via mtime polling and reloads automatically within one update cycle (default 30s) — no restart needed
+3. Restart the container only to force an immediate reload: `podman restart ac-discordbot`
 
 ## Using Docker Compose
 
