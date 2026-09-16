@@ -31,7 +31,7 @@ const App = {
         // Route through checkAuth() so proxy mode returns to config screen
         // without a Bearer-token prompt (bug #29)
         document.getElementById('login-again-btn').addEventListener('click', () => {
-            this.checkAuth();
+            this.checkAuth().catch((err) => console.error('checkAuth failed:', err));
         });
 
         // Add server button
