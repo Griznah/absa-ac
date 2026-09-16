@@ -19,9 +19,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        # actions/checkout@v6.0.2 (pinned SHA: de0fac2e4500dabe0009e67214ff5f5447ce83dd)
+        # actions/checkout@v7.0.1 (pinned SHA: 3d3c42e5aac5ba805825da76410c181273ba90b1)
         # NOTE: credentials may persist in artifacts, review usage
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -38,9 +38,9 @@ jobs:
     needs: secretscan
     steps:
       - name: Checkout repository
-        # actions/checkout@v6.0.2 (pinned SHA: de0fac2e4500dabe0009e67214ff5f5447ce83dd)
+        # actions/checkout@v7.0.1 (pinned SHA: 3d3c42e5aac5ba805825da76410c181273ba90b1)
         # NOTE: credentials may persist in artifacts, review usage
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 1
           persist-credentials: false
@@ -58,9 +58,9 @@ jobs:
     needs: govulncheck
     steps:
       - name: Checkout repository
-        # actions/checkout@v6.0.2 (pinned SHA: de0fac2e4500dabe0009e67214ff5f5447ce83dd)
+        # actions/checkout@v7.0.1 (pinned SHA: 3d3c42e5aac5ba805825da76410c181273ba90b1)
         # NOTE: credentials may persist in artifacts, review usage
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
 
@@ -95,9 +95,9 @@ jobs:
       packages: write
     steps:
       - name: Checkout repository
-        # actions/checkout@v4.0.0 (pinned SHA: 1e31de5234b9f8995739874a8ce0492dc87873e2)
+        # actions/checkout@v7.0.1 (pinned SHA: 3d3c42e5aac5ba805825da76410c181273ba90b1)
         # NOTE: credentials may persist in artifacts, review usage
-        uses: actions/checkout@1e31de5234b9f8995739874a8ce0492dc87873e2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
 
