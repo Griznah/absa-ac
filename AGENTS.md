@@ -25,7 +25,7 @@ Monitors Assetto Corsa servers, posts to Discord. Dynamic config reload. Optiona
 
 ## Process
 - All work on separate branches
-- Before building anything non-trivial, make a plan and use a review skill before presenting it to the user
+- Before building anything non-trivial, use `pi-plans` to make a plan and review the plan before presenting it to the user
 - Use relevant skills to review code before creating PRs
 - After opening a PR on GitHub wait for external AI reviewers
 
